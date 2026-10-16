@@ -1,15 +1,18 @@
-"""모의 브로커: 모의 베팅 체결과 뱅크롤 관리. PROTECTED.
+"""모의 브로커: 한국 주식 스윙 매매. PROTECTED.
 
-체결은 정직하게: 매수는 실시간 CLOB 최우선 매도호가(best ask)에 체결된다
-(스프레드를 건너는 테이커 주문과 동일). journal/ledger.jsonl 의 유일한 작성자.
-원본: bennyjo/phil core/ledger.py (Apache-2.0) 기반.
+- 매수: 장중에만, 실시간 현재가 x (1+슬리피지) + 수수료. 수량은 정수.
+- 청산: resolve.py 가 일봉으로 손절/목표/만기를 판정 (에이전트가 조기 매도도 가능).
+- journal/ledger.jsonl 의 작성자는 이 파일과 resolve.py 뿐.
+
+포지션 row 의 status: open → closed. 별도로 'calib'(만기 종가 > 매수가 여부)를 기록해
+에이전트 확률의 정확도를 손절 여부와 무관하게 잰다.
 """
+import math
 import os
-import re
 import uuid
 
-from . import pmapi, policy
-from .config import LEDGER, append_jsonl, iso, load_config, load_jsonl, now_utc, parse_ts
+from . import market, naver, policy
+from .config import LEDGER, append_jsonl, dump_jsonl, iso, load_config, load_jsonl
 
 
 class Rejected(Exception):
@@ -20,127 +23,157 @@ def read_ledger():
     return load_jsonl(LEDGER)
 
 
+def buy_cost(price, qty, costs):
+    fill = price * (1 + costs["slippage"])
+    gross = fill * qty
+    return fill, round(gross + gross * costs["commission"])
+
+
+def sell_proceeds(price, qty, costs):
+    fill = price * (1 - costs["slippage"])
+    gross = fill * qty
+    return fill, round(gross - gross * costs["commission"] - gross * costs["sell_tax"])
+
+
 def cash(entries, cfg=None):
     cfg = cfg or load_config()
-    c = cfg["sim_bankroll_usd"]
+    c = cfg["sim_bankroll_krw"]
     for e in entries:
-        c -= e["stake_usd"]
-        if e["status"] == "won":
-            c += e["shares"]
-        elif e["status"] == "void":
-            c += e["stake_usd"]
-    return round(c, 4)
+        c -= e["cost_krw"]
+        if e["status"] == "closed":
+            c += e["proceeds_krw"]
+    return c
 
 
-def place(market_id, outcome, est_prob, stake, category, edge_class, rationale,
-          cycle_id=None):
+def equity(entries=None, cfg=None, prices=None):
+    """현금 + 보유 종목 평가액(현재가 기준, 매도비용 차감)."""
+    cfg = cfg or load_config()
+    entries = entries if entries is not None else read_ledger()
+    total = cash(entries, cfg)
+    for e in entries:
+        if e["status"] == "open":
+            p = (prices or {}).get(e["code"]) or e.get("last_price") or e["entry_price"]
+            total += sell_proceeds(p, e["qty"], cfg["costs"])[1]
+    return total
+
+
+def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rationale,
+        amount_krw=None, cycle_id=None, now=None):
     cfg = load_config()
+    lim, costs = cfg["limits"], cfg["costs"]
     entries = read_ledger()
     open_pos = [e for e in entries if e["status"] == "open"]
     cycle_id = cycle_id or os.environ.get("PHIL_CYCLE_ID") or "manual"
 
-    if len(open_pos) >= cfg["max_open_positions"]:
-        raise Rejected(f"최대 오픈 포지션({cfg['max_open_positions']}) 도달")
+    ok, why = market.trading_window(now)
+    if not ok:
+        raise Rejected(f"지금은 매수할 수 없음: {why}")
+    if len(open_pos) >= lim["max_open_positions"]:
+        raise Rejected(f"최대 보유 종목 수({lim['max_open_positions']}) 도달")
     if cycle_id != "manual" and sum(1 for e in entries if e.get("cycle_id") == cycle_id) \
-            >= cfg["max_new_positions_per_cycle"]:
-        raise Rejected(f"사이클당 신규 포지션 한도({cfg['max_new_positions_per_cycle']}) 도달")
-    if not 0 < stake <= cfg["max_stake_usd"]:
-        raise Rejected(f"stake 는 0 초과 {cfg['max_stake_usd']} 이하여야 함")
-    if stake > cash(entries, cfg):
-        raise Rejected("모의 현금 부족")
+            >= lim["max_new_positions_per_cycle"]:
+        raise Rejected(f"사이클당 신규 매수 한도({lim['max_new_positions_per_cycle']}) 도달")
+    if any(e["code"] == code for e in open_pos):
+        raise Rejected("이미 보유 중인 종목")
+    if not lim["horizon_days_min"] <= horizon_days <= lim["horizon_days_max"]:
+        raise Rejected(f"보유 기간은 {lim['horizon_days_min']}~{lim['horizon_days_max']} 거래일")
+    if not lim["stop_pct_min"] <= stop_pct <= lim["stop_pct_max"]:
+        raise Rejected(f"손절폭은 {lim['stop_pct_min']:.0%}~{lim['stop_pct_max']:.0%}")
+    if target_pct is not None and target_pct <= 0:
+        raise Rejected("목표 수익률은 양수")
     if not 0.0 < est_prob < 1.0:
         raise Rejected("est-prob 는 (0,1) 범위")
-    why = policy.check_category(category, "", cfg)
-    if why:
-        raise Rejected(why)
-    if edge_class not in cfg["edge_classes"]:
-        raise Rejected(f"edge-class 는 {cfg['edge_classes']} 중 하나")
     if not rationale or len(rationale.strip()) < 10:
         raise Rejected("rationale(근거)를 한 줄 이상 적어야 함")
-    if any(e["market_id"] == str(market_id) for e in open_pos):
-        raise Rejected("이 마켓에 이미 오픈 포지션이 있음")
-
-    m = pmapi.gamma_market(market_id)
-    q = m.get("question") or ""
-    if m.get("closed") or not m.get("active", True):
-        raise Rejected("마감된 마켓")
-    for pat in cfg["banned_question_patterns"]:
-        if re.search(pat, q):
-            raise Rejected("금지된 마켓 유형 (초단기 코인 업/다운)")
-    why = policy.check_category(category, q, cfg)
+    why = policy.check_edge_class(edge_class, cfg)
     if why:
         raise Rejected(why)
-    end = parse_ts(m.get("endDate"))
-    if end is None:
-        raise Rejected("마감 시각을 알 수 없음")
-    mins = (end - now_utc()).total_seconds() / 60
-    if mins < cfg["min_minutes_to_resolution"]:
-        raise Rejected(f"결과 확정까지 {cfg['min_minutes_to_resolution']}분 미만")
-    tokens = pmapi.market_tokens(m)
-    if tokens is None:
-        raise Rejected("CLOB 토큰을 읽을 수 없는 마켓")
-    if outcome not in tokens:
-        raise Rejected(f"outcome {outcome!r} 은 {list(tokens)} 중 하나여야 함")
-    bid, ask, _ = pmapi.best_prices(tokens[outcome])
-    if ask is None:
-        raise Rejected("호가창에 매도 물량 없음 (체결 불가)")
-    if not cfg["min_entry_price"] <= ask <= cfg["max_entry_price"]:
-        raise Rejected(f"체결가 {ask} 가 허용 범위 밖")
-    # 정직한 체결: 실제 테이커 수수료까지 비용에 넣는다
-    fee = pmapi.taker_fee_per_share(m, ask, cfg["policy"].get("default_fee"))
-    cost = ask + fee
-    edge = round(est_prob - cost, 4)
-    pol = cfg["policy"]
-    if edge < pol["min_edge_after_fees"]:
-        raise Rejected(f"수수료 포함 엣지 {edge:+.3f} < 최소 {pol['min_edge_after_fees']} "
-                       f"(내 확률 {est_prob} − (ask {ask} + 수수료 {fee:.4f}))")
-    cap = policy.stake_cap(edge, cfg)
-    if stake > cap + 1e-9:
-        raise Rejected(f"엣지 {edge:.3f} 에서 허용되는 최대 베팅은 ${cap}")
 
-    entry = {
-        "id": uuid.uuid4().hex[:12],
-        "ts": iso(),
-        "cycle_id": cycle_id,
-        "market_id": str(market_id),
-        "question": q,
-        "slug": m.get("slug"),
-        "end_date": m.get("endDate"),
-        "outcome": outcome,
-        "token_id": tokens[outcome],
-        "entry_price": ask,
-        "best_bid_at_entry": bid,
-        "mid_at_entry": round((bid + ask) / 2, 4) if bid is not None else ask,
-        "fee_per_share": fee,
-        "cost_per_share": round(cost, 6),
-        "est_prob": round(est_prob, 4),
-        "edge": edge,
-        "stake_usd": round(stake, 2),
-        "shares": round(stake / cost, 4),
-        "category": category,
-        "edge_class": edge_class,
-        "rationale": rationale.strip(),
-        "status": "open",
+    uni = market.universe()
+    if code not in uni:
+        raise Rejected("유니버스(시총 상위 300, 우선주·스팩 제외) 밖의 종목")
+    q = naver.quote(code)
+    if not q["tradable"]:
+        raise Rejected("거래 정지 또는 매매 불가 종목")
+    if q["market_status"] != "OPEN":
+        raise Rejected(f"장 상태 {q['market_status']}")
+    bars = naver.daily_bars(code, 260)
+    br = market.base_rate(bars, horizon_days)
+    edge = round(est_prob - br, 4)
+    if edge < cfg["policy"]["min_edge_vs_base_rate"]:
+        raise Rejected(f"엣지 부족: 내 확률 {est_prob} − 기저율 {br} = {edge:+.3f} "
+                       f"< {cfg['policy']['min_edge_vs_base_rate']}")
+
+    eq = equity(entries, cfg)
+    max_amt = eq * lim["max_position_pct"]
+    amount = min(amount_krw or max_amt, max_amt, cash(entries, cfg))
+    price = q["price"]
+    qty = math.floor(amount / (price * (1 + costs["slippage"]) * (1 + costs["commission"])))
+    if qty < 1:
+        raise Rejected("1주도 살 수 없는 금액")
+    fill, cost = buy_cost(price, qty, costs)
+    if cost > cash(entries, cfg):
+        raise Rejected("모의 현금 부족")
+
+    e = {
+        "id": uuid.uuid4().hex[:12], "ts": iso(), "cycle_id": cycle_id,
+        "code": code, "name": q["name"], "market": uni[code]["market"],
+        "qty": qty, "quote_price": price, "entry_price": round(fill, 2), "cost_krw": cost,
+        "horizon_days": horizon_days,
+        "stop_price": round(price * (1 - stop_pct), 2),
+        "target_price": round(price * (1 + target_pct), 2) if target_pct else None,
+        "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
+        "edge_class": edge_class, "rationale": rationale.strip(),
+        "status": "open", "last_price": price,
     }
-    append_jsonl(LEDGER, entry)
-    return entry
+    append_jsonl(LEDGER, e)
+    return e
 
 
-def status():
+def sell(position_id, reason, now=None):
+    """에이전트의 조기 매도 (장중, 현재가)."""
+    cfg = load_config()
+    ok, why = market.trading_window(now)
+    if not ok:
+        raise Rejected(f"지금은 매도할 수 없음: {why}")
+    rows = read_ledger()
+    for e in rows:
+        if e["id"] == position_id and e["status"] == "open":
+            if market.kst_date(e["ts"]) == market.kst_date(iso()):
+                raise Rejected("당일 매수한 종목은 당일 매도 불가 (스윙 규칙)")
+            q = naver.quote(e["code"])
+            fill, proceeds = sell_proceeds(q["price"], e["qty"], cfg["costs"])
+            e.update(status="closed", exit_price=round(fill, 2), proceeds_krw=proceeds,
+                     exit_reason=f"조기매도: {reason.strip()[:200]}", exit_ts=iso(),
+                     pnl_krw=proceeds - e["cost_krw"],
+                     ret_pct=round((proceeds / e["cost_krw"] - 1) * 100, 2))
+            dump_jsonl(LEDGER, rows)
+            return e
+    raise Rejected("보유 중인 포지션 id 가 아님")
+
+
+def status(refresh_prices=True):
     cfg = load_config()
     entries = read_ledger()
     open_pos = [e for e in entries if e["status"] == "open"]
-    settled = [e for e in entries if e["status"] in ("won", "lost")]
+    prices = {}
+    if refresh_prices and open_pos:
+        uni = market.universe(refresh=True)
+        prices = {e["code"]: (uni.get(e["code"]) or {}).get("price") for e in open_pos}
+    closed = [e for e in entries if e["status"] == "closed"]
     return {
-        "cash": cash(entries, cfg),
-        "bankroll_start": cfg["sim_bankroll_usd"],
+        "cash_krw": cash(entries, cfg),
+        "equity_krw": equity(entries, cfg, prices),
+        "bankroll_start_krw": cfg["sim_bankroll_krw"],
         "open_positions": len(open_pos),
-        "open_stake": round(sum(e["stake_usd"] for e in open_pos), 2),
-        "settled": len(settled),
-        "wins": sum(1 for e in settled if e["status"] == "won"),
-        "realized_pnl": round(sum(e.get("pnl_usd", 0) for e in settled), 2),
-        "open": [{"id": e["id"], "market_id": e["market_id"], "q": e["question"][:90],
-                  "outcome": e["outcome"], "entry": e["entry_price"],
-                  "est": e["est_prob"], "stake": e["stake_usd"], "ends": e["end_date"],
-                  "edge_class": e["edge_class"]} for e in open_pos],
+        "closed": len(closed),
+        "wins": sum(1 for e in closed if e["pnl_krw"] > 0),
+        "realized_pnl_krw": sum(e["pnl_krw"] for e in closed),
+        "open": [{
+            "id": e["id"], "code": e["code"], "name": e["name"], "qty": e["qty"],
+            "entry": e["entry_price"], "now": prices.get(e["code"]) or e.get("last_price"),
+            "unrealized_pct": round(((prices.get(e["code"]) or e["entry_price"]) / e["entry_price"] - 1) * 100, 2),
+            "stop": e["stop_price"], "target": e["target_price"], "horizon_days": e["horizon_days"],
+            "bought": e["ts"], "est_prob": e["est_prob"], "base_rate": e["base_rate"],
+            "edge_class": e["edge_class"]} for e in open_pos],
     }

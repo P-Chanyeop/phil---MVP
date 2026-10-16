@@ -1,10 +1,10 @@
 {
-  "_comment": "AGENT-EDITABLE. 에이전트 자신의 정책. 엔진 정책(config/protected.json 의 policy, `python tools.py policy`)이 항상 우선.",
-  "shrink_toward_market": 0.35,
-  "min_edge_after_fees": 0.05,
-  "big_disagreement": 0.10,
-  "max_correlated_bets": 3,
-  "max_new_bets_per_cycle": 6,
-  "forecasts_per_cycle_target": 15,
-  "preferred_categories": ["say-the-word", "commodities", "mlb", "countable-metric", "econ-release", "econ-rates"]
+  "_comment": "AGENT-EDITABLE. 에이전트 자신의 정책. 엔진 정책(`python tools.py policy`)이 항상 우선.",
+  "min_edge_vs_base_rate": 0.05,
+  "default_stop_pct": 0.04,
+  "position_size_pct_of_equity": 0.08,
+  "max_same_sector": 2,
+  "max_new_buys_per_cycle": 3,
+  "forecasts_per_cycle_target": 12,
+  "avoid_if_up_today_pct": 8
 }

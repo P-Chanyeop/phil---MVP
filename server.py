@@ -12,8 +12,10 @@ import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from phil import cycle, ledger, real, resolve, scan, score
-from phil.config import (CYCLE_LOGS, CYCLES_LOG, LEDGER, RETROS, ROOT, STRATEGY,
+import time
+
+from phil import cycle, ledger, market, naver, policy, resolve, score
+from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, RETROS, ROOT, STRATEGY,
                          STRATEGY_HISTORY, load_config, load_env, load_jsonl,
                          operator_state, save_operator_state)
 
@@ -37,20 +39,35 @@ def retro_list():
     return out
 
 
+_CACHE = {}
+
+
+def cached(key, ttl, fn):
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    try:
+        val = fn()
+    except Exception as e:  # noqa: BLE001
+        val = {"error": str(e)[:200]} if not hit else hit[1]
+    _CACHE[key] = (time.time(), val)
+    return val
+
+
 def state():
-    st = ledger.status()
-    sc = score.report()
-    op = operator_state()
+    mk = cached("market", 30, market.market_overview)
+    kospi = (mk.get("KOSPI") or {}).get("price") if isinstance(mk, dict) else None
+    st = cached("status", 30, ledger.status)
+    sc = score.report(kospi)
     cycles = load_jsonl(CYCLES_LOG)
     return {
-        "status": st, "score": sc, "operator": op,
+        "status": st, "score": sc, "operator": operator_state(), "market": mk,
         "current": dict(cycle.CURRENT),
         "claude_available": bool(cycle.claude_bin()),
         "cycles_run": len(cycles),
         "last_cycle": cycles[-1] if cycles else None,
         "next_auto_run": AUTO.next_run if AUTO else None,
-        "real_caps": real.caps(),
-        "real_key_set": bool(load_env().get("PHIL_PRIVATE_KEY")),
+        "policy": policy.summary()["rules"],
     }
 
 
@@ -100,8 +117,9 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/state":
                 return self._send(200, state(), extra=extra)
             if p == "/api/positions":
-                rows = load_jsonl(LEDGER)[::-1][: int(q("n", 200))]
-                return self._send(200, rows)
+                return self._send(200, load_jsonl(LEDGER)[::-1][: int(q("n", 200))])
+            if p == "/api/forecasts":
+                return self._send(200, load_jsonl(FORECASTS)[::-1][: int(q("n", 200))])
             if p == "/api/cycles":
                 return self._send(200, load_jsonl(CYCLES_LOG)[::-1][:50])
             if p == "/api/cycle-log":
@@ -133,12 +151,18 @@ class H(BaseHTTPRequestHandler):
                         return self._send(200, h)
                 return self._send(404, {"error": "없음"})
             if p == "/api/scan":
-                return self._send(200, scan.scan(limit=int(q("limit", 30)), query=q("query"),
-                                                 max_days=float(q("days")) if q("days") else None))
-            if p == "/api/market":
-                return self._send(200, scan.market_detail(q("id")))
-            if p == "/api/real":
-                return self._send(200, {"doctor": real.doctor(), "rows": real.rows()[:100]})
+                return self._send(200, market.scan(q("sort", "value"), q("query") or None,
+                                                   int(q("limit", 40)), q("market") or None))
+            if p == "/api/stock":
+                code = q("code", "")
+                if not re.fullmatch(r"\d{6}", code):
+                    return self._send(400, {"error": "종목코드 6자리"})
+                d = market.stock_detail(code)
+                try:
+                    d["news"] = naver.news(code, 8)
+                except naver.DataError:
+                    d["news"] = []
+                return self._send(200, d)
             return self._static(p, extra)
         except Exception as e:  # noqa: BLE001
             return self._send(500, {"error": str(e)[:500]})
@@ -167,33 +191,23 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/cycle/run":
                 if cycle.CURRENT["running"]:
                     return self._send(409, {"error": "이미 실행 중"})
-                threading.Thread(target=cycle.run_cycle, daemon=True).start()
+                threading.Thread(target=cycle.run_cycle, kwargs={"force_agent": bool(body.get("force"))},
+                                 daemon=True).start()
                 return self._send(200, {"ok": True})
             if p == "/api/cycle/stop":
                 return self._send(200, {"ok": cycle.stop_current()})
             if p == "/api/settle":
                 r = resolve.settle_all()
-                if operator_state()["real_enabled"]:
-                    try:
-                        r["real"] = real.settle()
-                    except real.RealError as e:
-                        r["real_error"] = str(e)
+                _CACHE.pop("status", None)
                 return self._send(200, r)
             if p == "/api/operator":
                 st = operator_state()
-                if "real_enabled" in body:
-                    want = bool(body["real_enabled"])
-                    if want and body.get("confirm") != "실거래 시작":
-                        return self._send(400, {"error": "확인 문구가 필요합니다"})
-                    st["real_enabled"] = want
                 if "auto_loop" in body:
                     st["auto_loop"] = bool(body["auto_loop"])
                 if "loop_minutes" in body:
-                    st["loop_minutes"] = max(10, min(1440, int(body["loop_minutes"])))
+                    st["loop_minutes"] = max(15, min(390, int(body["loop_minutes"])))
                 save_operator_state(st)
                 return self._send(200, st)
-            if p == "/api/real/reconcile":
-                return self._send(200, {"reconciled": real.reconcile()})
             return self._send(404, {"error": "없음"})
         except Exception as e:  # noqa: BLE001
             return self._send(500, {"error": str(e)[:500]})

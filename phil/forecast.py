@@ -1,50 +1,46 @@
 """예측 기록 (돈을 걸지 않는 확률 기록). PROTECTED.
 
-조사한 후보는 베팅하든 안 하든 확률을 남긴다. 정산되면 카테고리별 정확도가 쌓이고,
-시장보다 못하는 카테고리는 엔진이 자동으로 베팅을 금지한다 (policy.auto_ban).
-journal/forecasts.jsonl 의 작성자는 이 파일과 resolve.py 뿐.
+질문은 항상 같다: 'N 거래일 뒤 종가가 지금 가격보다 높을까?' — 비교 기준은 그 종목의
+과거 기저율. 많이 쌓일수록 어떤 근거(edge class)에서 내가 기저율보다 나은지 빨리 드러난다.
 """
 import os
 import uuid
 
-from . import pmapi
-from .config import FORECASTS, append_jsonl, iso, load_config, load_jsonl, now_utc, parse_ts
+from . import market, naver
+from .config import FORECASTS, append_jsonl, iso, load_config, load_jsonl
 
 
 class Rejected(Exception):
     pass
 
 
-def record(market_id, outcome, est_prob, category, note="", cycle_id=None):
+def record(code, horizon_days, est_prob, edge_class, note="", cycle_id=None, now=None):
     cfg = load_config()
+    lim = cfg["limits"]
     cycle_id = cycle_id or os.environ.get("PHIL_CYCLE_ID") or "manual"
     rows = load_jsonl(FORECASTS)
+    ok, why = market.trading_window(now)
+    if not ok:
+        raise Rejected(f"예측은 장중에만 기록 (기준 가격이 살아 있어야 함): {why}")
     if not 0.0 < est_prob < 1.0:
         raise Rejected("est-prob 는 (0,1) 범위")
-    if category not in cfg["policy"]["categories"]:
-        raise Rejected(f"category 는 {cfg['policy']['categories']} 중 하나")
+    if not lim["horizon_days_min"] <= horizon_days <= lim["horizon_days_max"]:
+        raise Rejected(f"기간은 {lim['horizon_days_min']}~{lim['horizon_days_max']} 거래일")
+    if edge_class not in cfg["policy"]["edge_classes"]:
+        raise Rejected(f"edge-class 는 {cfg['policy']['edge_classes']} 중 하나")
     if cycle_id != "manual" and sum(1 for r in rows if r.get("cycle_id") == cycle_id) \
-            >= cfg["max_forecasts_per_cycle"]:
-        raise Rejected(f"사이클당 예측 기록 한도({cfg['max_forecasts_per_cycle']}) 도달")
-    if any(r["market_id"] == str(market_id) and r["status"] == "open" for r in rows):
-        raise Rejected("이 마켓에 이미 열린 예측이 있음 (마켓당 하나)")
-    m = pmapi.gamma_market(market_id)
-    if m.get("closed"):
-        raise Rejected("마감된 마켓")
-    end = parse_ts(m.get("endDate"))
-    if not end or end <= now_utc():
-        raise Rejected("마감 시각이 지났거나 알 수 없음")
-    tokens = pmapi.market_tokens(m)
-    if not tokens or outcome not in tokens:
-        raise Rejected(f"outcome 은 {list(tokens or {})} 중 하나")
-    bid, ask, _ = pmapi.best_prices(tokens[outcome])
-    if bid is None or ask is None:
-        raise Rejected("호가가 비어 있어 시장 확률을 알 수 없음")
-    row = {"id": uuid.uuid4().hex[:12], "ts": iso(), "cycle_id": cycle_id,
-           "market_id": str(market_id), "question": m.get("question"), "slug": m.get("slug"),
-           "end_date": m.get("endDate"), "outcome": outcome, "token_id": tokens[outcome],
-           "est_prob": round(est_prob, 4), "best_bid_at_record": bid, "best_ask_at_record": ask,
-           "market_prob_at_record": round((bid + ask) / 2, 4), "category": category,
+            >= lim["max_forecasts_per_cycle"]:
+        raise Rejected(f"사이클당 예측 한도({lim['max_forecasts_per_cycle']}) 도달")
+    if any(r["code"] == code and r["status"] == "open" for r in rows):
+        raise Rejected("이 종목에 이미 열린 예측이 있음 (종목당 하나)")
+    if code not in market.universe():
+        raise Rejected("유니버스 밖의 종목")
+    q = naver.quote(code)
+    bars = naver.daily_bars(code, 260)
+    row = {"id": uuid.uuid4().hex[:12], "ts": iso(), "cycle_id": cycle_id, "code": code,
+           "name": q["name"], "horizon_days": horizon_days, "ref_price": q["price"],
+           "ref_date": market.kst_date(iso()), "est_prob": round(est_prob, 4),
+           "base_rate": market.base_rate(bars, horizon_days), "edge_class": edge_class,
            "note": (note or "").strip()[:500], "status": "open"}
     append_jsonl(FORECASTS, row)
     return row

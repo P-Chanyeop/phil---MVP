@@ -86,3 +86,10 @@ details summary{cursor:pointer;font-weight:700;font-size:14px;color:var(--accent
 .toast{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:13px;z-index:30;max-width:90%}
 .disclaimer{color:var(--muted);font-size:11px;line-height:1.5;padding:4px 4px 20px}
 .book{display:grid;grid-template-columns:1fr auto auto;gap:6px 12px;font-size:13px;margin-top:8px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chipbtn{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:7px 12px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit}
+.chipbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.up{color:#D2402E}.down{color:#2E6BD2}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:13px;margin-top:10px}
+.grid2 span:nth-child(odd){color:var(--muted)}
+.news a{color:var(--ink);text-decoration:none}.news .item{cursor:default}

@@ -1,203 +1,167 @@
-"""엔진 단위 테스트 (네트워크·실제 자금 없음): python -m unittest discover tests"""
+"""엔진 단위 테스트 (네트워크 없음): python -m unittest discover tests"""
 import datetime as dt
-import json
 import pathlib
 import sys
 import tempfile
-import types
 import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from phil import config, forecast, guard, ledger, pmapi, policy, real, resolve, score  # noqa: E402
+from phil import config, forecast, guard, ledger, market, policy, resolve, score  # noqa: E402
+
+KST = config.KST
+OPEN_TIME = dt.datetime(2026, 10, 14, 10, 0, tzinfo=KST)  # 수요일 장중
 
 
-def bet(i, status, est, entry, edge_class="cross-market", stake=5.0, market=None):
-    shares = round(stake / entry, 4)
-    r = {"id": f"b{i}", "ts": "2026-10-01T00:00:00Z", "market_id": market or f"m{i}",
-         "question": f"Q{i}", "end_date": "2099-01-01T00:00:00Z", "outcome": "Yes",
-         "token_id": f"t{i}", "entry_price": entry, "est_prob": est, "edge": est - entry,
-         "stake_usd": stake, "shares": shares, "category": "c", "edge_class": edge_class,
-         "rationale": "test rationale", "status": status, "settled_ts": "2026-10-02T00:00:00Z"}
-    if status == "won":
-        r["pnl_usd"] = round(shares - stake, 4)
-    elif status == "lost":
-        r["pnl_usd"] = -stake
-    return r
+def bars(start="2026-10-13", closes=(100,), ohlc=None):
+    """테스트용 일봉: 날짜는 start 부터 하루씩."""
+    d0 = dt.date.fromisoformat(start)
+    out = []
+    for i, c in enumerate(closes):
+        o, h, lo = (ohlc[i] if ohlc else (c, c, c))
+        out.append(((d0 + dt.timedelta(days=i)).isoformat(), o, h, lo, c, 1000))
+    return out
 
 
 class Tmp(unittest.TestCase):
     def setUp(self):
         self.d = pathlib.Path(tempfile.mkdtemp())
-        self.patches = [mock.patch.object(m, n, self.d / f) for m, n, f in [
-            (config, "LEDGER", "ledger.jsonl"), (ledger, "LEDGER", "ledger.jsonl"),
-            (resolve, "LEDGER", "ledger.jsonl"), (score, "LEDGER", "ledger.jsonl"),
-            (real, "LEDGER", "ledger.jsonl"), (score, "REAL_LEDGER", "real.jsonl"),
-            (real, "REAL_LEDGER", "real.jsonl"), (config, "OPERATOR", "op.json"),
-            (policy, "LEDGER", "ledger.jsonl"), (policy, "FORECASTS", "fc.jsonl"),
-            (score, "FORECASTS", "fc.jsonl"), (forecast, "FORECASTS", "fc.jsonl"),
-            (resolve, "FORECASTS", "fc.jsonl")]]
-        for p in self.patches:
-            p.start()
-        mock.patch("phil.real.operator_state", lambda: {"real_enabled": True}).start()
+        for mod, name, f in [(config, "LEDGER", "l.jsonl"), (ledger, "LEDGER", "l.jsonl"),
+                             (resolve, "LEDGER", "l.jsonl"), (score, "LEDGER", "l.jsonl"),
+                             (policy, "LEDGER", "l.jsonl"), (policy, "FORECASTS", "f.jsonl"),
+                             (score, "FORECASTS", "f.jsonl"), (forecast, "FORECASTS", "f.jsonl"),
+                             (resolve, "FORECASTS", "f.jsonl"), (score, "META", "m.json")]:
+            mock.patch.object(mod, name, self.d / f).start()
+        mock.patch("phil.market.universe", lambda refresh=False: {
+            "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
+        mock.patch("phil.market.trading_window", lambda now=None: (True, "장중")).start()
+        mock.patch("phil.naver.quote", lambda c: {"code": c, "name": "삼성전자", "price": 100.0,
+                                                  "market_status": "OPEN", "tradable": True}).start()
+        # 기저율 0.5 가 나오도록 오르내림 반복
+        mock.patch("phil.naver.daily_bars", lambda c, n=260: bars("2026-01-01", [100, 101] * 100)).start()
 
     def tearDown(self):
         mock.patch.stopall()
 
-    def write(self, rows):
-        config.dump_jsonl(self.d / "ledger.jsonl", rows)
+
+class TestCosts(unittest.TestCase):
+    def test_round_trip(self):
+        c = {"commission": 0.00015, "sell_tax": 0.002, "slippage": 0.0005}
+        _, cost = ledger.buy_cost(10000, 100, c)
+        _, proc = ledger.sell_proceeds(10000, 100, c)
+        self.assertEqual(cost, 1000650)       # 1,000,500 + 수수료 150
+        self.assertEqual(proc, 997351)        # 999,500 − 150 − 1,999
+        self.assertAlmostEqual((cost - proc) / 1e6, 0.0034, places=3)
+
+    def test_base_rate(self):
+        self.assertAlmostEqual(market.base_rate(bars(closes=[1, 2] * 50), 1), 0.5, delta=0.01)
+        self.assertGreater(market.base_rate(bars(closes=list(range(1, 100))), 3), 0.95)
+
+
+class TestBuy(Tmp):
+    def buy(self, est=0.6, **kw):
+        args = dict(code="005930", est_prob=est, horizon_days=3, stop_pct=0.04, target_pct=0.06,
+                    edge_class="earnings", rationale="실적 서프라이즈 테스트 근거")
+        args.update(kw)
+        return ledger.buy(**args)
+
+    def test_buy_ok_and_sizing(self):
+        e = self.buy()
+        self.assertAlmostEqual(e["base_rate"], 0.5, delta=0.01)
+        self.assertLessEqual(e["cost_krw"], 1_000_000)   # 자산의 10%
+        self.assertEqual(e["stop_price"], 96.0)
+        self.assertEqual(e["target_price"], 106.0)
+        with self.assertRaises(ledger.Rejected):  # 중복 보유
+            self.buy()
+
+    def test_edge_required(self):
+        with self.assertRaises(ledger.Rejected):
+            self.buy(est=0.55)
+
+    def test_limits(self):
+        for kw in ({"horizon_days": 6}, {"stop_pct": 0.01}, {"stop_pct": 0.2},
+                   {"edge_class": "nope"}, {"code": "000000"}):
+            with self.assertRaises(ledger.Rejected):
+                self.buy(**kw)
+
+    def test_closed_market(self):
+        with mock.patch("phil.market.trading_window", lambda now=None: (False, "주말")):
+            with self.assertRaises(ledger.Rejected):
+                self.buy()
 
 
 class TestResolve(Tmp):
-    def test_settle_won_lost_void(self):
-        now = config.now_utc()
-        e = bet(1, "open", 0.6, 0.5)
-        m = {"closed": True, "outcomes": '["Yes","No"]', "outcomePrices": '["1","0"]'}
-        self.assertTrue(resolve.settle_row(e, m, now))
-        self.assertEqual(e["status"], "won")
-        self.assertAlmostEqual(e["pnl_usd"], 5.0)
-        e2 = bet(2, "open", 0.6, 0.5)
-        m2 = {"closed": True, "outcomes": '["Yes","No"]', "outcomePrices": '["0","1"]'}
-        resolve.settle_row(e2, m2, now)
-        self.assertEqual((e2["status"], e2["pnl_usd"]), ("lost", -5.0))
-        e3 = bet(3, "open", 0.6, 0.5)
-        e3["end_date"] = "2020-01-01T00:00:00Z"
-        m3 = {"closed": True, "outcomes": '["Yes","No"]', "outcomePrices": '["0.5","0.5"]'}
-        resolve.settle_row(e3, m3, now)
-        self.assertEqual(e3["status"], "void")
-        self.assertFalse(resolve.settle_row(bet(4, "open", .6, .5), {"closed": False}, now))
+    def pos(self, **kw):
+        e = {"id": "p1", "ts": "2026-10-13T01:00:00Z", "code": "005930", "name": "삼성전자",
+             "qty": 100, "quote_price": 100.0, "entry_price": 100.05, "cost_krw": 10007,
+             "horizon_days": 3, "stop_price": 96.0, "target_price": 106.0, "est_prob": 0.6,
+             "base_rate": 0.5, "edge_class": "earnings", "status": "open"}
+        e.update(kw)
+        return e
 
-    def test_cash(self):
-        self.write([bet(1, "won", .6, .5), bet(2, "lost", .6, .5), bet(3, "open", .6, .5)])
-        # 1000 -5 +10 -5 -5
-        self.assertAlmostEqual(ledger.cash(ledger.read_ledger()), 995.0)
+    def run_settle(self, e, b, now=dt.datetime(2026, 10, 20, 9, 0, tzinfo=KST)):
+        resolve.settle_position(e, b, now, {"commission": 0.00015, "sell_tax": 0.002, "slippage": 0.0005})
+        return e
 
+    def test_stop(self):
+        b = bars("2026-10-13", [100, 98, 95], [(100, 100, 100), (99, 99, 97), (97, 97, 94)])
+        e = self.run_settle(self.pos(), b)
+        self.assertEqual((e["status"], e["exit_reason"], e["exit_date"]), ("closed", "손절", "2026-10-15"))
+        self.assertLess(e["pnl_krw"], 0)
 
-class TestScore(Tmp):
-    def test_qualification(self):
-        rows = [bet(i, "won" if i < 7 else "lost", 0.7, 0.5) for i in range(10)]
-        rows += [bet(100 + i, "lost", 0.7, 0.5, edge_class="other") for i in range(10)]
-        self.write(rows)
-        self.assertEqual(score.qualified_edge_classes(), ["cross-market"])
-        self.write(rows[:9])  # 표본 부족
-        self.assertEqual(score.qualified_edge_classes(), [])
+    def test_gap_down_fills_at_open(self):
+        b = bars("2026-10-13", [100, 90], [(100, 100, 100), (92, 93, 89)])
+        e = self.run_settle(self.pos(), b)
+        self.assertIn("갭하락", e["exit_reason"])
+        self.assertAlmostEqual(e["exit_price"], 92 * 0.9995, places=2)
 
+    def test_target(self):
+        b = bars("2026-10-13", [100, 105], [(100, 100, 100), (101, 107, 100)])
+        e = self.run_settle(self.pos(), b)
+        self.assertEqual(e["exit_reason"], "목표가 도달")
 
-class TestReal(Tmp):
-    def setUp(self):
-        super().setUp()
-        rows = [bet(i, "won" if i < 7 else "lost", 0.7, 0.5) for i in range(10)]
-        self.paper = bet(50, "open", 0.7, 0.5, market="mX")
-        self.write(rows + [self.paper])
-        mock.patch("phil.real.pmapi.best_prices", lambda t: (0.49, 0.51, 100)).start()
-        self.fake = mock.MagicMock()
-        self.fake.post_order.return_value = {"success": True, "status": "matched",
-                                             "orderID": "o1", "makingAmount": "1",
-                                             "takingAmount": "1.96"}
-        mock.patch("phil.real.client", lambda: self.fake).start()
-        mod = types.ModuleType("py_clob_client_v2")
-        mod.MarketOrderArgs = lambda **k: k
-        mod.OrderType = types.SimpleNamespace(FOK="FOK")
-        mock.patch.dict(sys.modules, {"py_clob_client_v2": mod}).start()
+    def test_both_same_day_is_stop(self):
+        b = bars("2026-10-13", [100, 100], [(100, 100, 100), (100, 107, 95)])
+        self.assertEqual(self.run_settle(self.pos(), b)["exit_reason"], "손절")
 
-    def test_place_and_caps(self):
-        r = real.place_twin(self.paper)
-        self.assertEqual(r["status"], "filled")
-        self.assertEqual(r["usd"], 1.0)
-        kwargs = self.fake.create_market_order.call_args[0][0]
-        self.assertEqual(kwargs["amount"], 1.0)
-        self.assertLessEqual(kwargs["price"], 0.52)
-        with self.assertRaises(real.RealError):  # 같은 마켓 중복
-            real.place_twin(self.paper)
+    def test_expiry_and_calib(self):
+        b = bars("2026-10-13", [100, 101, 102, 103])
+        e = self.run_settle(self.pos(), b)
+        self.assertEqual((e["exit_reason"], e["calib"]), ("만기 (종가)", "up"))
 
-    def test_unqualified_class_blocked(self):
-        p = dict(self.paper, edge_class="other", market_id="mY")
-        with self.assertRaises(real.RealError):
-            real.place_twin(p)
+    def test_expiry_waits_for_close(self):
+        b = bars("2026-10-13", [100, 101, 102, 103])
+        e = self.run_settle(self.pos(), b, now=dt.datetime(2026, 10, 16, 14, 0, tzinfo=KST))
+        self.assertEqual(e["status"], "open")
+        self.assertNotIn("calib", e)
 
-    def test_slippage_blocked(self):
-        mock.patch("phil.real.pmapi.best_prices", lambda t: (0.6, 0.6, 100)).start()
-        with self.assertRaises(real.RealError):
-            real.place_twin(self.paper)
+    def test_calib_after_stop(self):
+        b = bars("2026-10-13", [100, 95, 101, 104], [(100, 100, 100), (97, 97, 95), (101, 101, 101), (104, 104, 104)])
+        e = self.run_settle(self.pos(target_price=None), b)
+        self.assertEqual((e["exit_reason"], e["calib"]), ("손절", "up"))
 
-    def test_unknown_blocks_next(self):
-        self.fake.post_order.side_effect = TimeoutError("net")
-        r = real.place_twin(self.paper)
-        self.assertEqual(r["status"], "unknown")
-        with self.assertRaises(real.RealError):
-            real.place_twin(dict(self.paper, market_id="mZ", id="b51"))
-
-    def test_daily_cap(self):
-        with mock.patch("phil.real.caps", lambda: {"max_stake": 1.0, "daily_cap": 2.0,
-                                                    "max_open": 10, "max_slippage": .02}):
-            real.place_twin(dict(self.paper, market_id="a"))
-            real.place_twin(dict(self.paper, market_id="b"))
-            with self.assertRaises(real.RealError):
-                real.place_twin(dict(self.paper, market_id="c"))
-
-    def test_hard_ceiling(self):
-        with mock.patch("phil.real.load_config", lambda: {"real": {
-                "max_stake_usd": 999, "daily_stake_cap_usd": 999, "max_open_positions": 999}}):
-            c = real.caps()
-        self.assertEqual((c["max_stake"], c["daily_cap"], c["max_open"]),
-                         (real.HARD_MAX_STAKE, real.HARD_DAILY_CAP, real.HARD_MAX_OPEN))
-
-
-def fake_market(q="Will Fulham FC win?", fees=True):
-    return {"id": "m1", "question": q, "slug": "s", "active": True, "closed": False,
-            "endDate": (config.now_utc() + dt.timedelta(days=1)).isoformat(),
-            "outcomes": '["Yes","No"]', "clobTokenIds": '["t1","t2"]',
-            "feesEnabled": fees, "feeSchedule": {"rate": 0.05, "exponent": 1}}
+    def test_forecast(self):
+        r = {"status": "open", "ref_date": "2026-10-13", "horizon_days": 2, "ref_price": 100}
+        self.assertTrue(resolve.settle_forecast(r, bars("2026-10-13", [100, 99, 98]),
+                                                dt.datetime(2026, 10, 20, tzinfo=KST)))
+        self.assertEqual(r["status"], "down")
 
 
 class TestPolicy(Tmp):
-    def setUp(self):
-        super().setUp()
-        self.m = fake_market()
-        mock.patch("phil.ledger.pmapi.gamma_market", lambda i: self.m).start()
-        mock.patch("phil.forecast.pmapi.gamma_market", lambda i: self.m).start()
-        mock.patch("phil.pmapi.best_prices", lambda t: (0.48, 0.50, 100)).start()
-
-    def place(self, est, stake=1, cat="soccer"):
-        return ledger.place("m1", "Yes", est, stake, cat, "base-rate", "test rationale here")
-
-    def test_fee(self):
-        self.assertAlmostEqual(pmapi.taker_fee_per_share(self.m, 0.5), 0.0125)
-        self.assertEqual(pmapi.taker_fee_per_share(fake_market(fees=False), 0.5), 0.0)
-
-    def test_min_edge_after_fees(self):
-        with self.assertRaises(ledger.Rejected):  # 0.56 - 0.5125 = 0.0475 < 0.05
-            self.place(0.56)
-        e = self.place(0.57)
-        self.assertAlmostEqual(e["edge"], 0.0575)
-        self.assertAlmostEqual(e["shares"], round(1 / 0.5125, 4))
-
-    def test_stake_scales_with_edge(self):
-        with self.assertRaises(ledger.Rejected):  # 엣지 0.0575 → 최대 $2.5
-            self.place(0.57, stake=5)
-        self.assertEqual(policy.stake_cap(0.10), 10.0)
-        self.assertEqual(policy.stake_cap(0.05), 1.0)
-
-    def test_banned_category_and_pattern(self):
-        with self.assertRaises(ledger.Rejected):
-            self.place(0.7, cat="news")
-        self.m = fake_market(q="Will Elon Musk post 320-339 tweets from October 9 to 16?")
-        with self.assertRaises(ledger.Rejected):  # other 로 위장해도 질문 패턴으로 차단
-            self.place(0.7, cat="other")
-
-    def test_auto_ban_from_forecasts(self):
-        rows = [{"id": f"f{i}", "category": "soccer", "status": "lost", "est_prob": 0.8,
-                 "market_prob_at_record": 0.5} for i in range(30)]
-        config.dump_jsonl(self.d / "fc.jsonl", rows)
-        self.assertIn("soccer", policy.banned_categories())
-        with self.assertRaises(ledger.Rejected):
-            self.place(0.7)
+    def test_auto_ban(self):
+        rows = [{"id": str(i), "status": "down", "est_prob": 0.8, "base_rate": 0.5,
+                 "edge_class": "momentum"} for i in range(30)]
+        config.dump_jsonl(self.d / "f.jsonl", rows)
+        self.assertIn("momentum", policy.banned_edge_classes())
+        self.assertIsNotNone(policy.check_edge_class("momentum"))
+        self.assertIsNone(policy.check_edge_class("earnings"))
 
     def test_forecast_record(self):
-        r = forecast.record("m1", "Yes", 0.6, "soccer", "note")
-        self.assertEqual(r["market_prob_at_record"], 0.49)
-        with self.assertRaises(forecast.Rejected):  # 마켓당 하나
-            forecast.record("m1", "Yes", 0.6, "soccer")
+        r = forecast.record("005930", 3, 0.58, "news-flow", "note")
+        self.assertEqual(r["ref_price"], 100.0)
+        self.assertAlmostEqual(r["base_rate"], 0.5, delta=0.01)
+        with self.assertRaises(forecast.Rejected):
+            forecast.record("005930", 3, 0.58, "news-flow")
 
 
 class TestGuard(unittest.TestCase):

@@ -1,105 +1,89 @@
-"""캘리브레이션·손익 리포트. PROTECTED.
-
-정직한 지표는 brier_delta: (내 확률의 Brier) - (내가 지불한 시장가격의 Brier).
-음수면 에이전트가 시장보다 더 좋은 예측을 했다는 뜻.
-"""
+"""성적 리포트: 손익, 코스피 대비 초과수익, 확률 정확도. PROTECTED."""
 from collections import defaultdict
 
 from . import policy
-from .config import FORECASTS, load_config, load_jsonl, LEDGER, REAL_LEDGER
-from .ledger import cash
+from .config import FORECASTS, LEDGER, META, load_config, load_json, load_jsonl, save_json
+from .ledger import cash, equity
 
 
-def _stats(rows):
+def _trade_stats(rows):
     n = len(rows)
     if not n:
         return {"n": 0}
-    pnl = sum(r.get("pnl_usd", 0) for r in rows)
-    stake = sum(r["stake_usd"] for r in rows)
-    wins = sum(1 for r in rows if r["status"] == "won")
-    ba = sum((r["est_prob"] - (r["status"] == "won")) ** 2 for r in rows) / n
-    bm = sum((r["entry_price"] - (r["status"] == "won")) ** 2 for r in rows) / n
-    return {"n": n, "wins": wins, "win_rate": round(wins / n, 3),
-            "pnl": round(pnl, 2), "roi": round(pnl / stake, 3) if stake else 0,
-            "brier_agent": round(ba, 4), "brier_market": round(bm, 4),
-            "brier_delta": round(ba - bm, 4)}
+    pnl = sum(r["pnl_krw"] for r in rows)
+    cost = sum(r["cost_krw"] for r in rows)
+    wins = sum(1 for r in rows if r["pnl_krw"] > 0)
+    return {"n": n, "wins": wins, "win_rate": round(wins / n, 3), "pnl_krw": pnl,
+            "ret_on_cost_pct": round(pnl / cost * 100, 2) if cost else 0,
+            "avg_ret_pct": round(sum(r["ret_pct"] for r in rows) / n, 2)}
 
 
-def report():
+def ensure_meta():
+    """처음 실행 시 시작일과 코스피 기준값 기록 (벤치마크용)."""
+    meta = load_json(META, {})
+    if not meta.get("start_kospi"):
+        try:
+            from . import naver
+            from .config import now_kst
+            meta.update(start_date=now_kst().date().isoformat(),
+                        start_kospi=naver.index_quote("KOSPI")["price"])
+            save_json(META, meta)
+        except Exception:  # noqa: BLE001
+            pass
+    return meta
+
+
+def report(kospi_now=None):
     cfg = load_config()
     entries = load_jsonl(LEDGER)
-    settled = [e for e in entries if e["status"] in ("won", "lost")]
-    by_class, by_cat = defaultdict(list), defaultdict(list)
-    for e in settled:
+    closed = [e for e in entries if e["status"] == "closed"]
+    by_class = defaultdict(list)
+    for e in closed:
         by_class[e["edge_class"]].append(e)
-        by_cat[e.get("category") or "?"].append(e)
-    # 누적 자산 곡선 (정산 순서)
-    curve, eq = [], cfg["sim_bankroll_usd"]
-    for e in sorted(settled, key=lambda r: r.get("settled_ts", "")):
-        eq += e.get("pnl_usd", 0)
-        curve.append({"ts": e.get("settled_ts"), "equity": round(eq, 2)})
+    start = cfg["sim_bankroll_krw"]
+    curve, eq = [], start
+    for e in sorted(closed, key=lambda r: r.get("exit_ts", "")):
+        eq += e["pnl_krw"]
+        curve.append({"ts": e.get("exit_ts"), "equity": eq})
+    eq_now = equity(entries, cfg)
+    meta = load_json(META, {})
+    bench = None
+    if kospi_now and meta.get("start_kospi"):
+        bench = round((kospi_now / meta["start_kospi"] - 1) * 100, 2)
+    my_ret = round((eq_now / start - 1) * 100, 2)
+    fc = load_jsonl(FORECASTS)
     return {
-        "cash": cash(entries, cfg),
-        "bankroll_start": cfg["sim_bankroll_usd"],
-        "overall": _stats(settled),
-        "by_edge_class": {k: _stats(v) for k, v in sorted(by_class.items())},
-        "by_category": {k: _stats(v) for k, v in sorted(by_cat.items())},
-        "qualified_edge_classes": qualified_edge_classes(cfg, by_class),
-        "forecasts": forecast_summary(),
-        "category_calibration": policy.category_calibration(),
-        "banned_categories": policy.banned_categories(cfg),
+        "cash_krw": cash(entries, cfg),
+        "equity_krw": eq_now,
+        "bankroll_start_krw": start,
+        "return_pct": my_ret,
+        "kospi_return_pct": bench,
+        "alpha_pct": round(my_ret - bench, 2) if bench is not None else None,
+        "start_date": meta.get("start_date"),
+        "trades": _trade_stats(closed),
+        "by_edge_class": {k: _trade_stats(v) for k, v in sorted(by_class.items())},
+        "calibration": policy.calibration_overall(),
+        "calibration_by_edge_class": policy.calibration_by_class(),
+        "banned_edge_classes": policy.banned_edge_classes(cfg),
+        "verified_edge_classes": verified_edge_classes(by_class),
+        "forecasts": {"total": len(fc), "open": sum(1 for r in fc if r["status"] == "open"),
+                      "settled": sum(1 for r in fc if r["status"] in ("up", "down"))},
         "equity_curve": curve,
-        "real": real_summary(),
     }
 
 
-def qualified_edge_classes(cfg=None, by_class=None):
-    """실거래 복제가 허용되는 엣지 클래스: 정산 증거로 입증된 것만."""
-    cfg = cfg or load_config()
-    q = cfg["real"]["edge_qualification"]
+def verified_edge_classes(by_class=None):
+    """나중에 실거래를 붙일 때 기준: 청산 10건 이상, 수익, 기저율보다 정확."""
     if by_class is None:
         by_class = defaultdict(list)
         for e in load_jsonl(LEDGER):
-            if e["status"] in ("won", "lost"):
+            if e["status"] == "closed":
                 by_class[e["edge_class"]].append(e)
+    cal = policy.calibration_by_class()
     out = []
     for k, rows in by_class.items():
-        s = _stats(rows)
-        if s["n"] < q["min_settled"]:
-            continue
-        if q.get("require_positive_pnl") and s["pnl"] <= 0:
-            continue
-        if q.get("require_negative_brier_delta") and s["brier_delta"] >= 0:
-            continue
-        out.append(k)
+        s = _trade_stats(rows)
+        c = cal.get(k)
+        if s["n"] >= 10 and s["pnl_krw"] > 0 and c and c["brier_delta"] < 0:
+            out.append(k)
     return sorted(out)
-
-
-def real_summary():
-    rows = load_jsonl(REAL_LEDGER)
-    last = {}
-    for r in rows:
-        last[r["id"]] = r
-    vals = list(last.values())
-    filled = [r for r in vals if r["status"] in ("filled", "won", "lost")]
-    return {
-        "orders": len(vals),
-        "filled": len(filled),
-        "open": sum(1 for r in vals if r["status"] == "filled"),
-        "staked": round(sum(r.get("usd", 0) for r in filled), 2),
-        "pnl": round(sum(r.get("pnl_usd", 0) for r in vals if r["status"] in ("won", "lost")), 2),
-        "rejected": sum(1 for r in vals if r["status"] in ("rejected", "failed")),
-    }
-
-
-def forecast_summary():
-    rows = load_jsonl(FORECASTS)
-    st = [r for r in rows if r["status"] in ("won", "lost")]
-    out = {"total": len(rows), "open": sum(1 for r in rows if r["status"] == "open"),
-           "settled": len(st)}
-    if st:
-        y = lambda r: r["status"] == "won"  # noqa: E731
-        a = sum((r["est_prob"] - y(r)) ** 2 for r in st) / len(st)
-        m = sum((r["market_prob_at_record"] - y(r)) ** 2 for r in st) / len(st)
-        out.update(brier_agent=round(a, 4), brier_market=round(m, 4), brier_delta=round(a - m, 4))
-    return out

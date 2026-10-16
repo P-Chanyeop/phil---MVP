@@ -21,7 +21,7 @@
       <div class="card hero">
         <div class="hero-row">
           <div>
-            <div class="label">모의 뱅크롤</div>
+            <div class="label">모의 자산</div>
             <div class="big" id="equity">$—</div>
             <div class="sub" id="pnl">—</div>
           </div>
@@ -29,10 +29,10 @@
         </div>
         <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
         <div class="stats">
+          <div><b id="sKospi">—</b><span>코스피 대비</span></div>
           <div><b id="sWin">—</b><span>승률</span></div>
-          <div><b id="sSettled">—</b><span>정산</span></div>
           <div><b id="sFc">—</b><span>예측</span></div>
-          <div><b id="sBrier">—</b><span>시장 대비</span></div>
+          <div><b id="sBrier">—</b><span>기저율 대비</span></div>
         </div>
       </div>
 
@@ -40,7 +40,8 @@
         <div class="row between">
           <div>
             <div class="title">오늘의 사이클</div>
-            <div class="sub" id="cycleSub">정산 → 회고 → 전략 수정 → 조사 → 베팅</div>
+            <div class="sub" id="marketLine">—</div>
+            <div class="sub" id="cycleSub">정산 → 회고 → 전략 수정 → 조사 → 예측 → 매매</div>
           </div>
         </div>
         <div class="row gap mt">
@@ -65,7 +66,7 @@
       </div>
 
       <div class="card">
-        <div class="title">최근 정산</div>
+        <div class="title">최근 청산</div>
         <div id="settledList" class="list"></div>
       </div>
     </section>
@@ -73,12 +74,18 @@
     <!-- 탐색 -->
     <section id="tab-search" class="tab">
       <div class="card">
-        <div class="title">마켓 탐색</div>
-        <div class="sub">7일 안에 결과가 나는 Polymarket 마켓 (거래량 순)</div>
+        <div class="title">종목 탐색</div>
+        <div class="sub">코스피 시총 상위 200 + 코스닥 상위 100 (우선주·스팩 제외)</div>
         <form id="scanForm" class="row gap mt">
-          <input id="scanQ" class="input grow" placeholder="키워드 (예: nba, fed, election)">
+          <input id="scanQ" class="input grow" placeholder="종목명 또는 코드">
           <button class="btn primary">검색</button>
         </form>
+        <div class="chips mt" id="sortChips">
+          <button data-sort="value" class="chipbtn on">거래대금</button>
+          <button data-sort="up" class="chipbtn">상승률</button>
+          <button data-sort="down" class="chipbtn">하락률</button>
+          <button data-sort="rank" class="chipbtn">시가총액</button>
+        </div>
       </div>
       <div id="scanList" class="list cards"></div>
     </section>
@@ -98,47 +105,32 @@
         <details class="mt"><summary>현재 플레이북 보기</summary><pre id="playbook" class="doc"></pre></details>
       </div>
       <div class="card">
-        <div class="title">카테고리별 예측 정확도</div>
-        <div class="sub" id="fcSub">돈을 걸지 않은 예측까지 모두 정산해서, Phil 이 어느 분야에서 시장보다 정확한지 봐요. 시장보다 못한 분야는 엔진이 베팅을 막아요.</div>
+        <div class="title">근거 유형별 예측 정확도</div>
+        <div class="sub" id="fcSub">"N일 뒤 오를까?"에 대한 Phil 의 확률이 그 종목의 과거 기저율보다 정확한지 봐요.</div>
         <div id="catTable" class="list mt"></div>
       </div>
       <div class="card">
-        <div class="title">엣지 클래스별 성적</div>
+        <div class="title">근거 유형별 매매 성적</div>
         <div id="classTable" class="list"></div>
       </div>
     </section>
 
     <!-- 설정 -->
     <section id="tab-settings" class="tab">
-      <div class="card">
-        <div class="row between">
-          <div class="title">실거래</div>
-          <span id="realBadge" class="badge">OFF</span>
-        </div>
-        <div class="sub">정산 증거로 입증된 엣지 클래스의 모의 베팅만, 소액으로 실제 Polymarket 에 복제합니다.</div>
-        <div id="realDoctor" class="kv mt">점검 중…</div>
-        <div class="row gap mt">
-          <button id="btnRealToggle" class="btn primary grow">실거래 켜기</button>
-          <button id="btnReconcile" class="btn ghost">주문 확인</button>
-        </div>
-        <div class="title mt">실거래 주문</div>
-        <div id="realList" class="list"></div>
-      </div>
-      <div class="card">
+<div class="card">
         <div class="title">안전장치</div>
         <ul class="bullets">
           <li>에이전트는 <code>tools.py</code> 외의 명령을 실행할 수 없고, 엔진·설정·원장을 고칠 수 없어요 (고치면 자동 복구).</li>
-          <li>개인키는 에이전트에게 전달되지 않아요. 실거래는 사이클이 끝난 뒤 엔진이 직접 주문해요.</li>
-          <li>한도: <span id="capsText">—</span></li>
-          <li>베팅 규칙(엔진 강제): 수수료 포함 엣지 5% 이상만, 베팅액은 엣지에 비례($1~$10), 시장보다 부정확한 분야 금지.</li>
-          <li>모의 체결은 실시간 최우선 매도호가(ask)로, 정산은 Polymarket 공식 결과로 해요.</li>
+          <li id="policyRules"></li>
+          <li>체결은 실시간 현재가 + 슬리피지, 청산은 일봉 기준(손절·목표·만기). 같은 날 손절·목표가 둘 다 닿으면 손절로 봐요.</li>
+          <li>시세 접속이 안 되거나 장이 닫혀 있고 새로 정산된 것도 없으면 Claude 를 부르지 않아요 (비용 0).</li>
         </ul>
       </div>
       <div class="card">
         <div class="title">사이클 기록</div>
         <div id="cycleList" class="list"></div>
       </div>
-      <p class="disclaimer">연구용 실험입니다. 투자·베팅 조언이 아니며, 예측시장 거래는 일부 지역에서 제한되거나 불법일 수 있어요. 본인 지역의 규정을 확인하세요.</p>
+      <p class="disclaimer">모의투자 연구용 실험입니다. 투자 조언이 아니며, 과거 성과(모의 포함)는 미래 수익을 보장하지 않아요. 시세는 네이버 증권 공개 데이터를 사용해요.</p>
     </section>
   </main>
 
