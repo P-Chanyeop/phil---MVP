@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F4EEE6">
+<title>Phil 트레이더</title>
+<link rel="icon" href="phil.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><img src="phil.svg" alt="" class="logo"><span>Phil</span></div>
+    <div id="runPill" class="pill">대기 중</div>
+  </header>
+
+  <main>
+    <!-- 홈 -->
+    <section id="tab-home" class="tab active">
+      <div class="card hero">
+        <div class="hero-row">
+          <div>
+            <div class="label">모의 뱅크롤</div>
+            <div class="big" id="equity">$—</div>
+            <div class="sub" id="pnl">—</div>
+          </div>
+          <img src="phil.svg" class="mascot" alt="Phil">
+        </div>
+        <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+        <div class="stats">
+          <div><b id="sWin">—</b><span>승률</span></div>
+          <div><b id="sSettled">—</b><span>정산</span></div>
+          <div><b id="sOpen">—</b><span>보유</span></div>
+          <div><b id="sBrier">—</b><span>시장 대비</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <div>
+            <div class="title">오늘의 사이클</div>
+            <div class="sub" id="cycleSub">정산 → 회고 → 전략 수정 → 조사 → 베팅</div>
+          </div>
+        </div>
+        <div class="row gap mt">
+          <button id="btnRun" class="btn primary grow">▶ 사이클 실행</button>
+          <button id="btnStop" class="btn ghost hidden">■ 중지</button>
+          <button id="btnSettle" class="btn ghost">정산</button>
+        </div>
+        <div class="row between mt">
+          <label class="switch-row"><input type="checkbox" id="autoLoop"><span class="switch"></span>자동 반복</label>
+          <select id="loopMin" class="select">
+            <option value="30">30분마다</option><option value="60">1시간마다</option>
+            <option value="120">2시간마다</option><option value="240">4시간마다</option>
+          </select>
+        </div>
+        <div id="claudeWarn" class="warn hidden">`claude` CLI 를 찾지 못했어요. Claude Code 를 설치하고 로그인한 뒤 서버를 다시 켜 주세요.</div>
+        <pre id="liveLog" class="log hidden"></pre>
+      </div>
+
+      <div class="card">
+        <div class="title">보유 포지션</div>
+        <div id="openList" class="list"></div>
+      </div>
+
+      <div class="card">
+        <div class="title">최근 정산</div>
+        <div id="settledList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- 탐색 -->
+    <section id="tab-search" class="tab">
+      <div class="card">
+        <div class="title">마켓 탐색</div>
+        <div class="sub">7일 안에 결과가 나는 Polymarket 마켓 (거래량 순)</div>
+        <form id="scanForm" class="row gap mt">
+          <input id="scanQ" class="input grow" placeholder="키워드 (예: nba, fed, election)">
+          <button class="btn primary">검색</button>
+        </form>
+      </div>
+      <div id="scanList" class="list cards"></div>
+    </section>
+
+    <!-- 저널 -->
+    <section id="tab-journal" class="tab">
+      <div class="card">
+        <div class="tag">🏷 이름의 유래</div>
+        <div class="title lg">같은 날을 반복하며, 이길 때까지</div>
+        <div class="sub">매 사이클 결과를 정산하고, 틀린 걸 회고하고, 스스로 규칙을 고칩니다.</div>
+        <ol id="timeline" class="timeline mt"></ol>
+      </div>
+      <div class="card">
+        <div class="title">전략 수정 기록</div>
+        <div class="sub">플레이북의 모든 변경은 Phil 이 (모의로) 돈을 내고 배운 교훈이에요.</div>
+        <div id="stratHist" class="list mt"></div>
+        <details class="mt"><summary>현재 플레이북 보기</summary><pre id="playbook" class="doc"></pre></details>
+      </div>
+      <div class="card">
+        <div class="title">엣지 클래스별 성적</div>
+        <div id="classTable" class="list"></div>
+      </div>
+    </section>
+
+    <!-- 설정 -->
+    <section id="tab-settings" class="tab">
+      <div class="card">
+        <div class="row between">
+          <div class="title">실거래</div>
+          <span id="realBadge" class="badge">OFF</span>
+        </div>
+        <div class="sub">정산 증거로 입증된 엣지 클래스의 모의 베팅만, 소액으로 실제 Polymarket 에 복제합니다.</div>
+        <div id="realDoctor" class="kv mt">점검 중…</div>
+        <div class="row gap mt">
+          <button id="btnRealToggle" class="btn primary grow">실거래 켜기</button>
+          <button id="btnReconcile" class="btn ghost">주문 확인</button>
+        </div>
+        <div class="title mt">실거래 주문</div>
+        <div id="realList" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="title">안전장치</div>
+        <ul class="bullets">
+          <li>에이전트는 <code>tools.py</code> 외의 명령을 실행할 수 없고, 엔진·설정·원장을 고칠 수 없어요 (고치면 자동 복구).</li>
+          <li>개인키는 에이전트에게 전달되지 않아요. 실거래는 사이클이 끝난 뒤 엔진이 직접 주문해요.</li>
+          <li>한도: <span id="capsText">—</span></li>
+          <li>모의 체결은 실시간 최우선 매도호가(ask)로, 정산은 Polymarket 공식 결과로 해요.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="title">사이클 기록</div>
+        <div id="cycleList" class="list"></div>
+      </div>
+      <p class="disclaimer">연구용 실험입니다. 투자·베팅 조언이 아니며, 예측시장 거래는 일부 지역에서 제한되거나 불법일 수 있어요. 본인 지역의 규정을 확인하세요.</p>
+    </section>
+  </main>
+
+  <nav class="bottom">
+    <button data-tab="home" class="active" aria-label="홈"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></button>
+    <button data-tab="search" aria-label="탐색"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button>
+    <button data-tab="journal" aria-label="저널"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7M9 8h4"/></svg><i id="journalDot" class="dot hidden"></i></button>
+    <button data-tab="settings" aria-label="설정"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button>
+  </nav>
+</div>
+
+<div id="sheet" class="sheet hidden"><div class="sheet-body"><button class="close" id="sheetClose">✕</button><div id="sheetContent"></div></div></div>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

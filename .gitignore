@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.tmp
+# 개인 실행 기록 (로컬 데이터)
+journal/*.jsonl
+journal/operator.json
+journal/cycle-logs/
+journal/retros/*.md
