@@ -191,8 +191,7 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/cycle/run":
                 if cycle.CURRENT["running"]:
                     return self._send(409, {"error": "이미 실행 중"})
-                threading.Thread(target=cycle.run_cycle, kwargs={"force_agent": bool(body.get("force"))},
-                                 daemon=True).start()
+                threading.Thread(target=cycle.run_cycle, daemon=True).start()
                 return self._send(200, {"ok": True})
             if p == "/api/cycle/stop":
                 return self._send(200, {"ok": cycle.stop_current()})

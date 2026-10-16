@@ -111,7 +111,7 @@ async function loadLog() {
 }
 $("#btnRun").onclick = async () => {
   const closed = !S?.market?.can_trade_now;
-  try { await api("/api/cycle/run", {force: closed}); logFollow = true; lastLogText = ""; toast(closed ? "장이 닫혀 있어서 정산·회고만 해요" : "Phil 이 새로운 하루를 시작해요 🐹"); setTimeout(refresh, 800); } catch (e) { toast(e.message); }
+  try { await api("/api/cycle/run", {}); logFollow = true; lastLogText = ""; toast(closed ? "장이 닫혀 있어요. 새로 끝난 매매가 있을 때만 회고해요 (없으면 비용 0)" : "Phil 이 새로운 하루를 시작해요 🐹"); setTimeout(refresh, 800); } catch (e) { toast(e.message); }
 };
 $("#btnStop").onclick = async () => { await api("/api/cycle/stop", {}); toast("중지 요청을 보냈어요"); };
 $("#btnSettle").onclick = async () => {
