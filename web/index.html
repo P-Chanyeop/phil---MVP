@@ -31,7 +31,7 @@
         <div class="stats">
           <div><b id="sWin">—</b><span>승률</span></div>
           <div><b id="sSettled">—</b><span>정산</span></div>
-          <div><b id="sOpen">—</b><span>보유</span></div>
+          <div><b id="sFc">—</b><span>예측</span></div>
           <div><b id="sBrier">—</b><span>시장 대비</span></div>
         </div>
       </div>
@@ -98,6 +98,11 @@
         <details class="mt"><summary>현재 플레이북 보기</summary><pre id="playbook" class="doc"></pre></details>
       </div>
       <div class="card">
+        <div class="title">카테고리별 예측 정확도</div>
+        <div class="sub" id="fcSub">돈을 걸지 않은 예측까지 모두 정산해서, Phil 이 어느 분야에서 시장보다 정확한지 봐요. 시장보다 못한 분야는 엔진이 베팅을 막아요.</div>
+        <div id="catTable" class="list mt"></div>
+      </div>
+      <div class="card">
         <div class="title">엣지 클래스별 성적</div>
         <div id="classTable" class="list"></div>
       </div>
@@ -125,6 +130,7 @@
           <li>에이전트는 <code>tools.py</code> 외의 명령을 실행할 수 없고, 엔진·설정·원장을 고칠 수 없어요 (고치면 자동 복구).</li>
           <li>개인키는 에이전트에게 전달되지 않아요. 실거래는 사이클이 끝난 뒤 엔진이 직접 주문해요.</li>
           <li>한도: <span id="capsText">—</span></li>
+          <li>베팅 규칙(엔진 강제): 수수료 포함 엣지 5% 이상만, 베팅액은 엣지에 비례($1~$10), 시장보다 부정확한 분야 금지.</li>
           <li>모의 체결은 실시간 최우선 매도호가(ask)로, 정산은 Polymarket 공식 결과로 해요.</li>
         </ul>
       </div>

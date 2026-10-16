@@ -74,3 +74,15 @@ def outcome_prices(m):
         return {o: float(p) for o, p in zip(outs, prices)}
     except (TypeError, ValueError):
         return {}
+
+
+def taker_fee_per_share(m, price, default=None):
+    """주당 테이커 수수료 = rate * (p*(1-p))**exponent (py-clob-client-v2 fees.py 와 동일).
+    feesEnabled 가 False 면 0. 스케줄이 없으면 default."""
+    if m.get("feesEnabled") is False:
+        return 0.0
+    fs = m.get("feeSchedule") or default
+    if not fs:
+        return 0.0
+    rate, exp = float(fs.get("rate", 0)), float(fs.get("exponent", 1))
+    return round(rate * (price * (1 - price)) ** exp, 6)

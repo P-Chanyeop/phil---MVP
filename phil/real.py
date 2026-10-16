@@ -129,8 +129,9 @@ def place_twin(paper):
                       load_config()["max_entry_price"]), 2)
     if ask > limit:
         raise RealError(f"현재 ask {ask} 가 허용가 {limit} 초과 (모의 체결가 {paper['entry_price']})")
-    if paper["est_prob"] - ask <= 0:
-        raise RealError("현재가 기준 엣지 없음")
+    fee = paper.get("fee_per_share", 0) or 0
+    if paper["est_prob"] - (ask + fee) <= 0:
+        raise RealError("현재가(수수료 포함) 기준 엣지 없음")
 
     c = client()  # 키/라이브러리 문제는 주문 기록 전에 실패
     from py_clob_client_v2 import MarketOrderArgs, OrderType

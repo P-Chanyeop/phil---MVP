@@ -5,7 +5,8 @@
 """
 from collections import defaultdict
 
-from .config import load_config, load_jsonl, LEDGER, REAL_LEDGER
+from . import policy
+from .config import FORECASTS, load_config, load_jsonl, LEDGER, REAL_LEDGER
 from .ledger import cash
 
 
@@ -44,6 +45,9 @@ def report():
         "by_edge_class": {k: _stats(v) for k, v in sorted(by_class.items())},
         "by_category": {k: _stats(v) for k, v in sorted(by_cat.items())},
         "qualified_edge_classes": qualified_edge_classes(cfg, by_class),
+        "forecasts": forecast_summary(),
+        "category_calibration": policy.category_calibration(),
+        "banned_categories": policy.banned_categories(cfg),
         "equity_curve": curve,
         "real": real_summary(),
     }
@@ -86,3 +90,16 @@ def real_summary():
         "pnl": round(sum(r.get("pnl_usd", 0) for r in vals if r["status"] in ("won", "lost")), 2),
         "rejected": sum(1 for r in vals if r["status"] in ("rejected", "failed")),
     }
+
+
+def forecast_summary():
+    rows = load_jsonl(FORECASTS)
+    st = [r for r in rows if r["status"] in ("won", "lost")]
+    out = {"total": len(rows), "open": sum(1 for r in rows if r["status"] == "open"),
+           "settled": len(st)}
+    if st:
+        y = lambda r: r["status"] == "won"  # noqa: E731
+        a = sum((r["est_prob"] - y(r)) ** 2 for r in st) / len(st)
+        m = sum((r["market_prob_at_record"] - y(r)) ** 2 for r in st) / len(st)
+        out.update(brier_agent=round(a, 4), brier_market=round(m, 4), brier_delta=round(a - m, 4))
+    return out

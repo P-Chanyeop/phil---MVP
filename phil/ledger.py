@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 
-from . import pmapi
+from . import pmapi, policy
 from .config import LEDGER, append_jsonl, iso, load_config, load_jsonl, now_utc, parse_ts
 
 
@@ -50,6 +50,9 @@ def place(market_id, outcome, est_prob, stake, category, edge_class, rationale,
         raise Rejected("모의 현금 부족")
     if not 0.0 < est_prob < 1.0:
         raise Rejected("est-prob 는 (0,1) 범위")
+    why = policy.check_category(category, "", cfg)
+    if why:
+        raise Rejected(why)
     if edge_class not in cfg["edge_classes"]:
         raise Rejected(f"edge-class 는 {cfg['edge_classes']} 중 하나")
     if not rationale or len(rationale.strip()) < 10:
@@ -64,6 +67,9 @@ def place(market_id, outcome, est_prob, stake, category, edge_class, rationale,
     for pat in cfg["banned_question_patterns"]:
         if re.search(pat, q):
             raise Rejected("금지된 마켓 유형 (초단기 코인 업/다운)")
+    why = policy.check_category(category, q, cfg)
+    if why:
+        raise Rejected(why)
     end = parse_ts(m.get("endDate"))
     if end is None:
         raise Rejected("마감 시각을 알 수 없음")
@@ -80,6 +86,17 @@ def place(market_id, outcome, est_prob, stake, category, edge_class, rationale,
         raise Rejected("호가창에 매도 물량 없음 (체결 불가)")
     if not cfg["min_entry_price"] <= ask <= cfg["max_entry_price"]:
         raise Rejected(f"체결가 {ask} 가 허용 범위 밖")
+    # 정직한 체결: 실제 테이커 수수료까지 비용에 넣는다
+    fee = pmapi.taker_fee_per_share(m, ask, cfg["policy"].get("default_fee"))
+    cost = ask + fee
+    edge = round(est_prob - cost, 4)
+    pol = cfg["policy"]
+    if edge < pol["min_edge_after_fees"]:
+        raise Rejected(f"수수료 포함 엣지 {edge:+.3f} < 최소 {pol['min_edge_after_fees']} "
+                       f"(내 확률 {est_prob} − (ask {ask} + 수수료 {fee:.4f}))")
+    cap = policy.stake_cap(edge, cfg)
+    if stake > cap + 1e-9:
+        raise Rejected(f"엣지 {edge:.3f} 에서 허용되는 최대 베팅은 ${cap}")
 
     entry = {
         "id": uuid.uuid4().hex[:12],
@@ -93,10 +110,13 @@ def place(market_id, outcome, est_prob, stake, category, edge_class, rationale,
         "token_id": tokens[outcome],
         "entry_price": ask,
         "best_bid_at_entry": bid,
+        "mid_at_entry": round((bid + ask) / 2, 4) if bid is not None else ask,
+        "fee_per_share": fee,
+        "cost_per_share": round(cost, 6),
         "est_prob": round(est_prob, 4),
-        "edge": round(est_prob - ask, 4),
+        "edge": edge,
         "stake_usd": round(stake, 2),
-        "shares": round(stake / ask, 4),
+        "shares": round(stake / cost, 4),
         "category": category,
         "edge_class": edge_class,
         "rationale": rationale.strip(),

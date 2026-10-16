@@ -1,10 +1,10 @@
 {
-  "_comment": "AGENT-EDITABLE. 에이전트 자신의 베팅 크기 정책. 엔진의 하드캡(config/protected.json)이 항상 우선.",
-  "base_stake_usd": 5.0,
-  "max_stake_usd": 10.0,
-  "min_edge": 0.05,
-  "min_edge_wide_spread": 0.08,
-  "wide_spread": 0.04,
+  "_comment": "AGENT-EDITABLE. 에이전트 자신의 정책. 엔진 정책(config/protected.json 의 policy, `python tools.py policy`)이 항상 우선.",
+  "shrink_toward_market": 0.35,
+  "min_edge_after_fees": 0.05,
+  "big_disagreement": 0.10,
   "max_correlated_bets": 3,
-  "max_new_bets_per_cycle": 8
+  "max_new_bets_per_cycle": 6,
+  "forecasts_per_cycle_target": 15,
+  "preferred_categories": ["say-the-word", "commodities", "mlb", "countable-metric", "econ-release", "econ-rates"]
 }

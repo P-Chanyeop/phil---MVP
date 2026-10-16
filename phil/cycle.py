@@ -13,7 +13,7 @@ import time
 import uuid
 
 from . import ledger, real, resolve, score
-from .config import (CYCLE_LOGS, CYCLES_LOG, LEDGER, ROOT, STRATEGY, STRATEGY_HISTORY,
+from .config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, ROOT, STRATEGY, STRATEGY_HISTORY,
                      append_jsonl, iso, load_config, load_jsonl, now_utc, operator_state)
 from . import guard
 
@@ -63,6 +63,9 @@ def build_prompt(cycle_id, settled):
         "cycle_id": cycle_id,
         "now_utc": iso(),
         "newly_settled_this_cycle": settled["settled"],
+        "newly_settled_forecasts": settled.get("forecasts_settled", [])[:40],
+        "forecasts": sc["forecasts"],
+        "banned_categories": sc["banned_categories"],
         "cash": st["cash"], "open_positions": st["open_positions"],
         "overall": sc["overall"],
         "qualified_edge_classes_for_real": sc["qualified_edge_classes"],
@@ -121,7 +124,8 @@ def run_cycle(dry=False):
     try:
         settled = resolve.settle_all()
         result["settled"] = len(settled["settled"])
-        log(f"📒 정산: {len(settled['settled'])}건 (오픈 {settled['still_open']})")
+        log(f"📒 정산: 베팅 {len(settled['settled'])}건 (오픈 {settled['still_open']}), "
+            f"예측 {len(settled['forecasts_settled'])}건 (오픈 {settled['forecasts_open']})")
         if operator_state()["real_enabled"]:
             try:
                 rs = real.settle()
@@ -141,6 +145,7 @@ def run_cycle(dry=False):
         snap = guard.snapshot()
         strat_before = _strategy_snapshot()
         before_ids = {e["id"] for e in load_jsonl(LEDGER)}
+        before_fc = len(load_jsonl(FORECASTS))
         env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
         env["PHIL_CYCLE_ID"] = cycle_id
         timeout = load_config()["cycle"].get("timeout_minutes", 40) * 60
@@ -189,7 +194,8 @@ def run_cycle(dry=False):
         result["strategy_changed"] = [d["path"] for d in diffs]
         new_bets = [e["id"] for e in load_jsonl(LEDGER) if e["id"] not in before_ids]
         result["new_bets"] = new_bets
-        log(f"🎯 새 모의 베팅 {len(new_bets)}건")
+        result["new_forecasts"] = len(load_jsonl(FORECASTS)) - before_fc
+        log(f"🎯 새 모의 베팅 {len(new_bets)}건 · 예측 기록 {result['new_forecasts']}건")
         if summary_line:
             try:
                 result["summary"] = json.loads(summary_line)

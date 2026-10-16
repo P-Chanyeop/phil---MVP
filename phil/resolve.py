@@ -7,7 +7,7 @@ import datetime as dt
 import sys
 
 from . import pmapi
-from .config import LEDGER, dump_jsonl, iso, load_jsonl, now_utc, parse_ts
+from .config import FORECASTS, LEDGER, dump_jsonl, iso, load_jsonl, now_utc, parse_ts
 
 VOID_GRACE_HOURS = 48
 
@@ -20,24 +20,25 @@ def settle_row(e, m, now):
     if decisive:
         won = e["outcome"] in decisive
         e["status"] = "won" if won else "lost"
-        e["pnl_usd"] = round(e["shares"] - e["stake_usd"], 4) if won else -e["stake_usd"]
+        if "shares" in e:
+            e["pnl_usd"] = round(e["shares"] - e["stake_usd"], 4) if won else -e["stake_usd"]
         e["outcome_won"] = max(prices.items(), key=lambda kv: kv[1])[0]
         e["settled_ts"] = iso(parse_ts(m.get("closedTime")) or now)
         return True
     end = parse_ts(e["end_date"])
     if end and now - end > dt.timedelta(hours=VOID_GRACE_HOURS):
         e["status"] = "void"
-        e["pnl_usd"] = 0.0
+        if "shares" in e:
+            e["pnl_usd"] = 0.0
         e["settled_ts"] = iso(now)
         return True
     return False
 
 
-def settle_all():
-    entries = load_jsonl(LEDGER)
-    now = now_utc()
-    cache, settled = {}, []
-    for e in entries:
+def _settle_file(path, now, cache):
+    rows = load_jsonl(path)
+    settled = []
+    for e in rows:
         if e["status"] != "open":
             continue
         end = parse_ts(e["end_date"])
@@ -53,9 +54,21 @@ def settle_all():
         if cache[mid] is not None and settle_row(e, cache[mid], now):
             settled.append(e)
     if settled:
-        dump_jsonl(LEDGER, entries)
-    return {"settled": [{"id": e["id"], "status": e["status"], "pnl": e["pnl_usd"],
+        dump_jsonl(path, rows)
+    return rows, settled
+
+
+def settle_all():
+    now = now_utc()
+    cache = {}
+    entries, settled = _settle_file(LEDGER, now, cache)
+    forecasts, fsettled = _settle_file(FORECASTS, now, cache)
+    return {"settled": [{"id": e["id"], "status": e["status"], "pnl": e.get("pnl_usd"),
                          "est": e["est_prob"], "entry": e["entry_price"],
                          "edge_class": e["edge_class"], "q": e["question"][:90]}
                         for e in settled],
-            "still_open": sum(1 for e in entries if e["status"] == "open")}
+            "still_open": sum(1 for e in entries if e["status"] == "open"),
+            "forecasts_settled": [{"id": r["id"], "status": r["status"], "est": r["est_prob"],
+                                   "mkt": r["market_prob_at_record"], "category": r["category"],
+                                   "q": r["question"][:90]} for r in fsettled],
+            "forecasts_open": sum(1 for r in forecasts if r["status"] == "open")}

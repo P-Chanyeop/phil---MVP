@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from phil import config, guard, ledger, real, resolve, score  # noqa: E402
+from phil import config, forecast, guard, ledger, pmapi, policy, real, resolve, score  # noqa: E402
 
 
 def bet(i, status, est, entry, edge_class="cross-market", stake=5.0, market=None):
@@ -33,7 +33,10 @@ class Tmp(unittest.TestCase):
             (config, "LEDGER", "ledger.jsonl"), (ledger, "LEDGER", "ledger.jsonl"),
             (resolve, "LEDGER", "ledger.jsonl"), (score, "LEDGER", "ledger.jsonl"),
             (real, "LEDGER", "ledger.jsonl"), (score, "REAL_LEDGER", "real.jsonl"),
-            (real, "REAL_LEDGER", "real.jsonl"), (config, "OPERATOR", "op.json")]]
+            (real, "REAL_LEDGER", "real.jsonl"), (config, "OPERATOR", "op.json"),
+            (policy, "LEDGER", "ledger.jsonl"), (policy, "FORECASTS", "fc.jsonl"),
+            (score, "FORECASTS", "fc.jsonl"), (forecast, "FORECASTS", "fc.jsonl"),
+            (resolve, "FORECASTS", "fc.jsonl")]]
         for p in self.patches:
             p.start()
         mock.patch("phil.real.operator_state", lambda: {"real_enabled": True}).start()
@@ -138,6 +141,63 @@ class TestReal(Tmp):
             c = real.caps()
         self.assertEqual((c["max_stake"], c["daily_cap"], c["max_open"]),
                          (real.HARD_MAX_STAKE, real.HARD_DAILY_CAP, real.HARD_MAX_OPEN))
+
+
+def fake_market(q="Will Fulham FC win?", fees=True):
+    return {"id": "m1", "question": q, "slug": "s", "active": True, "closed": False,
+            "endDate": (config.now_utc() + dt.timedelta(days=1)).isoformat(),
+            "outcomes": '["Yes","No"]', "clobTokenIds": '["t1","t2"]',
+            "feesEnabled": fees, "feeSchedule": {"rate": 0.05, "exponent": 1}}
+
+
+class TestPolicy(Tmp):
+    def setUp(self):
+        super().setUp()
+        self.m = fake_market()
+        mock.patch("phil.ledger.pmapi.gamma_market", lambda i: self.m).start()
+        mock.patch("phil.forecast.pmapi.gamma_market", lambda i: self.m).start()
+        mock.patch("phil.pmapi.best_prices", lambda t: (0.48, 0.50, 100)).start()
+
+    def place(self, est, stake=1, cat="soccer"):
+        return ledger.place("m1", "Yes", est, stake, cat, "base-rate", "test rationale here")
+
+    def test_fee(self):
+        self.assertAlmostEqual(pmapi.taker_fee_per_share(self.m, 0.5), 0.0125)
+        self.assertEqual(pmapi.taker_fee_per_share(fake_market(fees=False), 0.5), 0.0)
+
+    def test_min_edge_after_fees(self):
+        with self.assertRaises(ledger.Rejected):  # 0.56 - 0.5125 = 0.0475 < 0.05
+            self.place(0.56)
+        e = self.place(0.57)
+        self.assertAlmostEqual(e["edge"], 0.0575)
+        self.assertAlmostEqual(e["shares"], round(1 / 0.5125, 4))
+
+    def test_stake_scales_with_edge(self):
+        with self.assertRaises(ledger.Rejected):  # 엣지 0.0575 → 최대 $2.5
+            self.place(0.57, stake=5)
+        self.assertEqual(policy.stake_cap(0.10), 10.0)
+        self.assertEqual(policy.stake_cap(0.05), 1.0)
+
+    def test_banned_category_and_pattern(self):
+        with self.assertRaises(ledger.Rejected):
+            self.place(0.7, cat="news")
+        self.m = fake_market(q="Will Elon Musk post 320-339 tweets from October 9 to 16?")
+        with self.assertRaises(ledger.Rejected):  # other 로 위장해도 질문 패턴으로 차단
+            self.place(0.7, cat="other")
+
+    def test_auto_ban_from_forecasts(self):
+        rows = [{"id": f"f{i}", "category": "soccer", "status": "lost", "est_prob": 0.8,
+                 "market_prob_at_record": 0.5} for i in range(30)]
+        config.dump_jsonl(self.d / "fc.jsonl", rows)
+        self.assertIn("soccer", policy.banned_categories())
+        with self.assertRaises(ledger.Rejected):
+            self.place(0.7)
+
+    def test_forecast_record(self):
+        r = forecast.record("m1", "Yes", 0.6, "soccer", "note")
+        self.assertEqual(r["market_prob_at_record"], 0.49)
+        with self.assertRaises(forecast.Rejected):  # 마켓당 하나
+            forecast.record("m1", "Yes", 0.6, "soccer")
 
 
 class TestGuard(unittest.TestCase):

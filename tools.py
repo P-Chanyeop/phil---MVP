@@ -9,6 +9,9 @@
   python tools.py history [--n 30]             # 최근 정산된 베팅 (회고용)
   python tools.py scan [--limit 40] [--query nba] [--days 3]
   python tools.py market <market_id>           # 설명 + 실시간 호가
+  python tools.py policy                       # 엔진 강제 규칙, 금지 카테고리, 카테고리별 정확도
+  python tools.py forecast --market-id ID --outcome Yes --est-prob 0.62 --category sports \
+        --note "근거 한 줄"                     # 돈 안 거는 예측 기록 (조사한 후보는 전부)
   python tools.py bet --market-id ID --outcome Yes --est-prob 0.62 --stake 5 \
         --category sports --edge-class base-rate --rationale "근거 한 줄"
 """
@@ -19,7 +22,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from phil import ledger, scan, score
+from phil import forecast, ledger, policy, scan, score
 from phil.config import LEDGER, load_config, load_jsonl
 
 
@@ -33,6 +36,13 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     sub.add_parser("score")
+    sub.add_parser("policy")
+    f = sub.add_parser("forecast")
+    f.add_argument("--market-id", required=True)
+    f.add_argument("--outcome", required=True)
+    f.add_argument("--est-prob", type=float, required=True)
+    f.add_argument("--category", required=True, choices=cfg["policy"]["categories"])
+    f.add_argument("--note", default="")
     h = sub.add_parser("history")
     h.add_argument("--n", type=int, default=30)
     s = sub.add_parser("scan")
@@ -46,7 +56,7 @@ def main():
     b.add_argument("--outcome", required=True)
     b.add_argument("--est-prob", type=float, required=True)
     b.add_argument("--stake", type=float, required=True)
-    b.add_argument("--category", required=True)
+    b.add_argument("--category", required=True, choices=cfg["policy"]["categories"])
     b.add_argument("--edge-class", required=True, choices=cfg["edge_classes"])
     b.add_argument("--rationale", required=True)
     a = ap.parse_args()
@@ -57,6 +67,16 @@ def main():
         r = score.report()
         r.pop("equity_curve", None)
         out(r)
+    elif a.cmd == "policy":
+        out(policy.summary())
+    elif a.cmd == "forecast":
+        try:
+            r = forecast.record(a.market_id, a.outcome, a.est_prob, a.category, a.note)
+        except forecast.Rejected as err:
+            print(f"REJECTED: {err}")
+            sys.exit(2)
+        out({"recorded": r["id"], "market_prob": r["market_prob_at_record"],
+             "ask": r["best_ask_at_record"], "question": r["question"]})
     elif a.cmd == "history":
         rows = [e for e in load_jsonl(LEDGER) if e["status"] != "open"][-a.n:]
         out([{k: e.get(k) for k in ("id", "question", "outcome", "est_prob", "entry_price",
@@ -73,7 +93,8 @@ def main():
         except ledger.Rejected as err:
             print(f"REJECTED: {err}")
             sys.exit(2)
-        out({"placed": e["id"], "filled_at": e["entry_price"], "edge": e["edge"],
+        out({"placed": e["id"], "filled_at": e["entry_price"], "fee_per_share": e["fee_per_share"],
+             "edge_after_fees": e["edge"],
              "shares": e["shares"], "question": e["question"]})
 
 

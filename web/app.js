@@ -60,7 +60,7 @@ async function loadHome() {
   $("#pnl").innerHTML = `<span class="${pnl >= 0 ? "pos" : "neg"}">${usd(pnl, 1)}</span> 실현 손익 · 시작 ${usd(sc.bankroll_start)}`;
   $("#sWin").textContent = o.n ? pct(o.win_rate) : "—";
   $("#sSettled").textContent = o.n || 0;
-  $("#sOpen").textContent = S.status.open_positions;
+  $("#sFc").textContent = sc.forecasts.total;
   $("#sBrier").textContent = o.n ? (o.brier_delta < 0 ? "더 정확" : "덜 정확") : "—";
   $("#sBrier").className = o.n ? (o.brier_delta < 0 ? "pos" : "neg") : "";
   spark(sc.equity_curve, sc.bankroll_start);
@@ -75,7 +75,7 @@ async function loadHome() {
   $("#loopMin").value = String(S.operator.loop_minutes);
   const lc = S.last_cycle;
   let sub = `${S.cycles_run}번째 하루를 지났어요.`;
-  if (lc) sub += ` 마지막: ${ago(lc.finished)} · 베팅 ${lc.new_bets?.length ?? 0}건` + (lc.summary?.note ? ` — ${lc.summary.note}` : lc.error ? ` — ⚠️ ${lc.error}` : "");
+  if (lc) sub += ` 마지막: ${ago(lc.finished)} · 베팅 ${lc.new_bets?.length ?? 0}건 · 예측 ${lc.new_forecasts ?? 0}건` + (lc.summary?.note ? ` — ${lc.summary.note}` : lc.error ? ` — ⚠️ ${lc.error}` : "");
   if (S.operator.auto_loop && S.next_auto_run) sub += ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후`;
   $("#cycleSub").textContent = sub;
   if (run || logFollow) loadLog();
@@ -91,7 +91,7 @@ document.addEventListener("click", (ev) => {
   const e = POS.find((p) => p.id === it.dataset.pos); if (!e) return;
   sheet(`<div class="title lg">${esc(e.question)}</div>
     <div class="kv mt"><b>상태</b>${esc(e.status)}<br><b>선택</b>${esc(e.outcome)}<br><b>체결가 / 내 확률</b>${e.entry_price} / ${pct(e.est_prob)} (엣지 ${e.edge})<br>
-    <b>금액 / 수량</b>$${e.stake_usd} / ${e.shares}주<br><b>엣지 클래스</b>${esc(e.edge_class)} · ${esc(e.category)}<br>
+    <b>금액 / 수량</b>$${e.stake_usd} / ${e.shares}주${e.fee_per_share ? ` (수수료 주당 ${e.fee_per_share})` : ""}<br><b>엣지 클래스</b>${esc(e.edge_class)} · ${esc(e.category)}<br>
     <b>마감</b>${esc(e.end_date)}<br>${e.pnl_usd != null ? `<b>손익</b>${usd(e.pnl_usd, 1)}<br>` : ""}</div>
     <div class="sub mt">근거</div><div>${esc(e.rationale)}</div>
     <p><a href="https://polymarket.com/market/${esc(e.slug)}" target="_blank" rel="noopener">Polymarket 에서 보기 →</a></p>`);
@@ -154,6 +154,12 @@ async function loadJournal() {
   $("#timeline").innerHTML = items.join("");
   $("#stratHist").innerHTML = strat.history.map((h) => `<div class="item" data-diff="${esc(h.cycle_id)}"><div class="q">✏️ ${h.paths.map(esc).join(", ")}</div><div class="meta"><span>${ago(h.ts)}</span><span>사이클 ${esc(h.cycle_id)}</span></div></div>`).join("") || `<div class="empty">아직 전략을 고친 적이 없어요.</div>`;
   $("#playbook").textContent = strat.playbook;
+  const cal = S?.score.category_calibration || {}, banned = S?.score.banned_categories || {}, fc = S?.score.forecasts || {};
+  $("#fcSub").textContent = `예측 ${fc.total || 0}건 기록 · ${fc.settled || 0}건 정산` + (fc.settled ? ` · 전체적으로 시장보다 ${fc.brier_delta < 0 ? "더 정확" : "덜 정확"} (Δ ${fc.brier_delta})` : "") + ". 시장보다 못한 분야는 엔진이 베팅을 막아요.";
+  const cats = [...new Set([...Object.keys(cal), ...Object.keys(banned)])].sort((a, b) => (cal[b]?.n || 0) - (cal[a]?.n || 0));
+  $("#catTable").innerHTML = cats.map((k) => { const c = cal[k]; const b = banned[k];
+    return `<div class="item"><div class="q">${esc(k)} ${b ? '<span class="chip bad">베팅 금지</span>' : c && c.n >= 10 && c.brier_delta < 0 ? '<span class="chip good">시장보다 정확</span>' : ""}</div>
+    <div class="meta">${c ? `<span>${c.n}건</span><span class="${c.brier_delta < 0 ? "pos" : "neg"}">Δ ${c.brier_delta}</span>` : "<span>기록 없음</span>"}${b ? `<span>${esc(b)}</span>` : ""}</div></div>`; }).join("") || `<div class="empty">아직 기록이 없어요.</div>`;
   const cls = S?.score.by_edge_class || {}, q = S?.score.qualified_edge_classes || [];
   $("#classTable").innerHTML = Object.entries(cls).map(([k, v]) => `<div class="item"><div class="q">${esc(k)} ${q.includes(k) ? '<span class="chip good">실거래 자격</span>' : ""}</div>
     <div class="meta"><span>${v.n}건</span><span>승률 ${pct(v.win_rate)}</span><span class="${v.pnl >= 0 ? "pos" : "neg"}">${usd(v.pnl, 1)}</span><span>brier Δ ${v.brier_delta}</span></div></div>`).join("") || `<div class="empty">정산된 베팅이 쌓이면 여기 나타나요.</div>`;
@@ -176,7 +182,7 @@ async function loadSettings() {
   $("#btnRealToggle").className = "btn grow " + (on ? "danger" : "primary");
   const cycles = await api("/api/cycles");
   $("#cycleList").innerHTML = cycles.map((c) => `<div class="item" data-log="${esc(c.cycle_id)}"><div class="q">${c.ok ? "✅" : "⚠️"} ${esc(c.summary?.note || c.error || "사이클 " + c.cycle_id)}</div>
-    <div class="meta"><span>${ago(c.finished)}</span><span>정산 ${c.settled ?? 0}</span><span>베팅 ${c.new_bets?.length ?? 0}</span>${c.cost_usd ? `<span>$${(+c.cost_usd).toFixed(2)}</span>` : ""}${c.reverted ? '<span class="chip bad">보호파일 복구</span>' : ""}</div></div>`).join("") || `<div class="empty">아직 실행한 사이클이 없어요.</div>`;
+    <div class="meta"><span>${ago(c.finished)}</span><span>정산 ${c.settled ?? 0}</span><span>베팅 ${c.new_bets?.length ?? 0}</span><span>예측 ${c.new_forecasts ?? 0}</span>${c.cost_usd ? `<span>$${(+c.cost_usd).toFixed(2)}</span>` : ""}${c.reverted ? '<span class="chip bad">보호파일 복구</span>' : ""}</div></div>`).join("") || `<div class="empty">아직 실행한 사이클이 없어요.</div>`;
   $("#realDoctor").textContent = "점검 중…";
   try {
     const r = await api("/api/real");
