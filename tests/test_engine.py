@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from phil import config, forecast, guard, ledger, market, policy, resolve, score  # noqa: E402
+from phil import config, forecast, guard, kis, ledger, market, policy, resolve, score, watch  # noqa: E402
 
 KST = config.KST
 OPEN_TIME = dt.datetime(2026, 10, 14, 10, 0, tzinfo=KST)  # 수요일 장중
@@ -30,7 +30,9 @@ class Tmp(unittest.TestCase):
                              (resolve, "LEDGER", "l.jsonl"), (score, "LEDGER", "l.jsonl"),
                              (policy, "LEDGER", "l.jsonl"), (policy, "FORECASTS", "f.jsonl"),
                              (score, "FORECASTS", "f.jsonl"), (forecast, "FORECASTS", "f.jsonl"),
-                             (resolve, "FORECASTS", "f.jsonl"), (score, "META", "m.json")]:
+                             (resolve, "FORECASTS", "f.jsonl"), (score, "META", "m.json"),
+                             (watch, "KIS_LEDGER", "k.jsonl"), (watch, "WATCH_EVENTS", "w.jsonl"),
+                             (config, "LOCK_FILE", ".lock")]:
             mock.patch.object(mod, name, self.d / f).start()
         mock.patch("phil.market.universe", lambda refresh=False: {
             "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
@@ -171,6 +173,66 @@ class TestPolicy(Tmp):
         self.assertAlmostEqual(r["base_rate"], 0.5, delta=0.01)
         with self.assertRaises(forecast.Rejected):
             forecast.record("005930", 3, 0.58, "news-flow")
+
+
+class TestWatch(Tmp):
+    def setUp(self):
+        super().setUp()
+        self.price = 100.0
+        mock.patch("phil.naver.quote", lambda c: {"code": c, "name": "삼성전자", "price": self.price,
+                                                  "market_status": "OPEN", "tradable": True}).start()
+        mock.patch("phil.watch.trading_dates", lambda today: ["2026-10-13", "2026-10-14", "2026-10-15"]).start()
+        self.e = ledger.buy("005930", 0.6, 2, 0.04, 0.06, "earnings", "실적 서프라이즈 테스트 근거")
+
+    def status(self):
+        return next(x for x in ledger.read_ledger() if x["id"] == self.e["id"])
+
+    def test_stop_and_target(self):
+        now = dt.datetime(2026, 10, 15, 10, 0, tzinfo=KST)
+        self.price = 97.0
+        watch.check_positions(now)
+        self.assertEqual(self.status()["status"], "open")
+        self.price = 95.9
+        watch.check_positions(now)
+        self.assertEqual(self.status()["exit_reason"], "손절 (실시간)")
+
+    def test_expiry_at_1515(self):
+        with mock.patch("phil.watch.kst_date", lambda ts: "2026-10-13"):
+            watch.check_positions(dt.datetime(2026, 10, 15, 15, 0, tzinfo=KST))
+            self.assertEqual(self.status()["status"], "open")
+            watch.check_positions(dt.datetime(2026, 10, 15, 15, 16, tzinfo=KST))
+        self.assertEqual(self.status()["exit_reason"], "만기 (15:15)")
+
+    def test_kis_mirror_buy_then_sell(self):
+        orders = []
+        mock.patch("phil.kis.configured", lambda: True).start()
+        mock.patch("phil.kis.order", lambda code, qty, side: orders.append((code, qty, side)) or "0001").start()
+        mock.patch("phil.watch.operator_state", lambda: {"kis_enabled": True, "kis_enabled_at": "2000-01-01T00:00:00Z"}).start()
+        today = market.kst_date(config.iso())
+        now = dt.datetime.fromisoformat(today + "T10:00:00+09:00")
+        watch.sync_kis(now)
+        watch.sync_kis(now)  # 중복 매수 없음
+        self.assertEqual(orders, [("005930", self.e["qty"], "buy")])
+        ledger.close_position(self.e["id"], 101.0, "테스트 청산")
+        watch.sync_kis(now)
+        watch.sync_kis(now)
+        self.assertEqual(orders[-1], ("005930", self.e["qty"], "sell"))
+        self.assertEqual(len(orders), 2)
+
+    def test_kis_failure_recorded_no_retry_buy(self):
+        mock.patch("phil.kis.configured", lambda: True).start()
+        calls = []
+
+        def boom(*a):
+            calls.append(a)
+            raise kis.KisError("모의투자 잔고 부족")
+        mock.patch("phil.kis.order", boom).start()
+        mock.patch("phil.watch.operator_state", lambda: {"kis_enabled": True, "kis_enabled_at": "2000-01-01T00:00:00Z"}).start()
+        now = dt.datetime.fromisoformat(market.kst_date(config.iso()) + "T10:00:00+09:00")
+        watch.sync_kis(now)
+        watch.sync_kis(now)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(watch.kis_rows()[self.e["id"]]["status"], "buy_failed")
 
 
 class TestGuard(unittest.TestCase):

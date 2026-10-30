@@ -12,7 +12,7 @@ import os
 import uuid
 
 from . import market, naver, policy
-from .config import LEDGER, append_jsonl, dump_jsonl, iso, load_config, load_jsonl
+from .config import LEDGER, append_jsonl, dump_jsonl, iso, ledger_lock, load_config, load_jsonl
 
 
 class Rejected(Exception):
@@ -112,8 +112,6 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
     if qty < 1:
         raise Rejected("1주도 살 수 없는 금액")
     fill, cost = buy_cost(price, qty, costs)
-    if cost > cash(entries, cfg):
-        raise Rejected("모의 현금 부족")
 
     e = {
         "id": uuid.uuid4().hex[:12], "ts": iso(), "cycle_id": cycle_id,
@@ -126,30 +124,52 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "edge_class": edge_class, "rationale": rationale.strip(),
         "status": "open", "last_price": price,
     }
-    append_jsonl(LEDGER, e)
+    # 네트워크 조회는 잠금 밖에서, 최종 확인과 기록은 잠금 안에서 (다른 프로세스와 경합 방지)
+    with ledger_lock():
+        entries = read_ledger()
+        if any(x["code"] == code and x["status"] == "open" for x in entries):
+            raise Rejected("이미 보유 중인 종목")
+        if sum(1 for x in entries if x["status"] == "open") >= lim["max_open_positions"]:
+            raise Rejected(f"최대 보유 종목 수({lim['max_open_positions']}) 도달")
+        if cost > cash(entries, cfg):
+            raise Rejected("모의 현금 부족")
+        append_jsonl(LEDGER, e)
     return e
+
+
+def close_position(position_id, price, reason):
+    """보유 포지션을 주어진 가격(슬리피지·수수료·세금 차감)으로 청산. 이미 청산됐으면 None."""
+    cfg = load_config()
+    with ledger_lock():
+        rows = read_ledger()
+        for e in rows:
+            if e["id"] == position_id and e["status"] == "open":
+                fill, proceeds = sell_proceeds(price, e["qty"], cfg["costs"])
+                e.update(status="closed", exit_price=round(fill, 2), proceeds_krw=proceeds,
+                         exit_reason=reason, exit_ts=iso(),
+                         exit_date=market.kst_date(iso()),
+                         pnl_krw=proceeds - e["cost_krw"],
+                         ret_pct=round((proceeds / e["cost_krw"] - 1) * 100, 2))
+                dump_jsonl(LEDGER, rows)
+                return e
+    return None
 
 
 def sell(position_id, reason, now=None):
     """에이전트의 조기 매도 (장중, 현재가)."""
-    cfg = load_config()
     ok, why = market.trading_window(now)
     if not ok:
         raise Rejected(f"지금은 매도할 수 없음: {why}")
-    rows = read_ledger()
-    for e in rows:
-        if e["id"] == position_id and e["status"] == "open":
-            if market.kst_date(e["ts"]) == market.kst_date(iso()):
-                raise Rejected("당일 매수한 종목은 당일 매도 불가 (스윙 규칙)")
-            q = naver.quote(e["code"])
-            fill, proceeds = sell_proceeds(q["price"], e["qty"], cfg["costs"])
-            e.update(status="closed", exit_price=round(fill, 2), proceeds_krw=proceeds,
-                     exit_reason=f"조기매도: {reason.strip()[:200]}", exit_ts=iso(),
-                     pnl_krw=proceeds - e["cost_krw"],
-                     ret_pct=round((proceeds / e["cost_krw"] - 1) * 100, 2))
-            dump_jsonl(LEDGER, rows)
-            return e
-    raise Rejected("보유 중인 포지션 id 가 아님")
+    e = next((x for x in read_ledger() if x["id"] == position_id and x["status"] == "open"), None)
+    if not e:
+        raise Rejected("보유 중인 포지션 id 가 아님")
+    if market.kst_date(e["ts"]) == market.kst_date(iso()):
+        raise Rejected("당일 매수한 종목은 당일 매도 불가 (스윙 규칙)")
+    q = naver.quote(e["code"])
+    closed = close_position(position_id, q["price"], f"조기매도: {reason.strip()[:200]}")
+    if not closed:
+        raise Rejected("이미 청산된 포지션")
+    return closed
 
 
 def status(refresh_prices=True):

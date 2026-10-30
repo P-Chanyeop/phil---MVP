@@ -74,11 +74,15 @@ async function loadHome() {
   $("#btnRun").textContent = run ? "실행 중…" : mk.can_trade_now ? "▶ 사이클 실행" : "▶ 정산·회고 실행";
   $("#btnStop").classList.toggle("hidden", !run);
   $("#claudeWarn").classList.toggle("hidden", S.claude_available);
+  const authBad = S.last_cycle && S.last_cycle.error_kind === "auth";
+  $("#authWarn").classList.toggle("hidden", !authBad);
+  if (authBad) $("#authWarn").textContent = "🔑 " + S.last_cycle.error;
   $("#autoLoop").checked = S.operator.auto_loop;
   $("#loopMin").value = String(S.operator.loop_minutes);
   const lc = S.last_cycle;
   let sub = `${S.cycles_run}번째 하루를 지났어요.`;
   if (lc) sub += ` 마지막: ${ago(lc.finished)} · 매수 ${lc.new_bets?.length ?? 0}건 · 예측 ${lc.new_forecasts ?? 0}건` + (lc.summary?.note ? ` — ${lc.summary.note}` : lc.error ? ` — ⚠️ ${lc.error}` : "");
+  if (S.watch && S.watch.watching) sub += ` · 실시간 감시 ${S.watch.watching}종목`;
   if (S.operator.auto_loop) sub += S.next_auto_run ? ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후` : " · 자동 반복: 장중과 장 마감 후(15:45)에 실행";
   $("#cycleSub").textContent = sub;
   $("#openList").innerHTML = (S.status.open || []).map(openItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
@@ -189,6 +193,21 @@ document.addEventListener("click", async (ev) => {
 // 설정
 async function loadSettings() {
   $("#policyRules").textContent = "엔진 규칙: " + (S?.policy || []).join(" · ");
+  $("#aiInfo").innerHTML = `<b>모델</b>${esc(S?.model)}<br><b>로그인 방식</b>${S?.auth === "api_key" ? "API 키 (.env 의 ANTHROPIC_API_KEY, 사용한 만큼 결제)" : "Claude 구독 로그인 (만료되면 터미널에서 claude → /login)"}`;
+  try {
+    const k = await api("/api/kis");
+    $("#kisBadge").textContent = k.enabled ? "ON" : "OFF"; $("#kisBadge").classList.toggle("on", k.enabled);
+    $("#btnKis").textContent = k.enabled ? "연동 끄기" : "연동 켜기";
+    $("#btnKis").className = "btn mt " + (k.enabled ? "ghost" : "primary"); $("#btnKis").style.width = "100%";
+    const b = k.balance, sm = b && b.summary;
+    $("#kisInfo").innerHTML = !k.configured ? `<span class="neg">.env 에 PHIL_KIS_APP_KEY · PHIL_KIS_APP_SECRET · PHIL_KIS_ACCOUNT 를 넣고 Phil 을 다시 켜 주세요.</span>`
+      : b && b.error ? `<span class="neg">계좌 조회 실패: ${esc(b.error)}</span>`
+      : sm ? `<b>총 평가</b>${won(sm.total_krw)}<br><b>예수금</b>${won(sm.cash_krw)}<br><b>평가손익</b><span class="${ud(sm.pnl_krw)}">${won(sm.pnl_krw, 1)}</span><br><b>보유</b>${(b.holdings || []).map((h) => `${esc(h.name)} ${h.qty}주 (${sp(h.pnl_pct)})`).join(", ") || "없음"}` : "—";
+    $("#kisList").innerHTML = (k.rows || []).map((r) => `<div class="item"><div class="q">${esc(r.name)} ${r.qty}주</div><div class="meta"><span class="chip ${/failed/.test(r.status) ? "bad" : r.status === "sold" ? "gray" : "good"}">${({bought: "매수됨", sold: "매도됨", buy_failed: "매수 실패", sell_failed: "매도 실패"})[r.status] || esc(r.status)}</span>${r.exit_reason ? `<span>${esc(r.exit_reason)}</span>` : ""}<span>${ago(r.updated)}</span>${r.error ? `<span class="neg">${esc(r.error.slice(0, 80))}</span>` : ""}</div></div>`).join("") || `<div class="empty">아직 주문이 없어요.</div>`;
+  } catch (e) { $("#kisInfo").textContent = "확인 실패: " + e.message; }
+  const w = await api("/api/watch").catch(() => []);
+  $("#watchSub").textContent = `장중 1분마다 보유 종목의 손절·목표가·만기를 확인해요 (Claude 비용 없음). 마지막 확인 ${ago(S?.watch?.last_tick) || "—"}` + (S?.watch?.last_error ? ` · ⚠️ ${S.watch.last_error}` : "");
+  $("#watchList").innerHTML = w.slice(0, 15).map((x) => `<div class="item"><div class="q">${x.kind === "close" ? "🔔" : x.kind === "kis" ? "🏦" : "⚠️"} ${esc(x.msg)}</div><div class="meta"><span>${ago(x.ts)}</span></div></div>`).join("") || `<div class="empty">아직 감시 이벤트가 없어요.</div>`;
   const cycles = await api("/api/cycles");
   $("#cycleList").innerHTML = cycles.map((c) => `<div class="item" data-log="${esc(c.cycle_id)}"><div class="q">${c.ok ? (c.mode ? "✅" : "😴") : "⚠️"} ${esc(c.summary?.note || c.error || "사이클 " + c.cycle_id)}</div>
     <div class="meta"><span>${ago(c.finished)}</span>${c.mode ? `<span>${c.mode === "FULL" ? "장중" : "회고"}</span>` : ""}<span>청산 ${c.settled ?? 0}</span><span>매수 ${c.new_bets?.length ?? 0}</span><span>예측 ${c.new_forecasts ?? 0}</span>${c.cost_usd ? `<span>$${(+c.cost_usd).toFixed(2)}</span>` : ""}${c.reverted ? '<span class="chip bad">보호파일 복구</span>' : ""}</div></div>`).join("") || `<div class="empty">아직 실행한 사이클이 없어요.</div>`;
@@ -205,3 +224,9 @@ async function refresh() {
 }
 refresh().then(loadPositions);
 setInterval(refresh, 5000);
+
+$("#btnKis").onclick = async () => {
+  const on = $("#kisBadge").textContent === "ON";
+  if (!on && !confirm("한투 모의투자 계좌 연동을 켤까요?\n지금부터 Phil 이 새로 사는 종목을 모의계좌에도 같은 수량으로 시장가 주문해요 (실제 돈 아님).")) return;
+  try { await api("/api/operator", {kis_enabled: !on}); toast(on ? "연동을 껐어요" : "연동을 켰어요"); await refresh(); loadSettings(); } catch (e) { toast(e.message); }
+};

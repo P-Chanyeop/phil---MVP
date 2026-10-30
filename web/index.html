@@ -56,6 +56,7 @@
             <option value="120">2시간마다</option><option value="240">4시간마다</option>
           </select>
         </div>
+        <div id="authWarn" class="warn hidden"></div>
         <div id="claudeWarn" class="warn hidden">`claude` CLI 를 찾지 못했어요. Claude Code 를 설치하고 로그인한 뒤 서버를 다시 켜 주세요.</div>
         <pre id="liveLog" class="log hidden"></pre>
       </div>
@@ -117,7 +118,27 @@
 
     <!-- 설정 -->
     <section id="tab-settings" class="tab">
-<div class="card">
+      <div class="card">
+        <div class="row between">
+          <div class="title">한투 모의투자 계좌</div>
+          <span id="kisBadge" class="badge">OFF</span>
+        </div>
+        <div class="sub">Phil 의 모의 매매를 한국투자증권 <b>모의투자 계좌</b>에도 똑같이 주문해요 (실제 돈 아님). 장중 1분마다 손절·목표가를 감시해서 바로 팔아요.</div>
+        <div id="kisInfo" class="kv mt">확인 중…</div>
+        <button id="btnKis" class="btn primary mt" style="width:100%">연동 켜기</button>
+        <div class="title mt">한투 주문 기록</div>
+        <div id="kisList" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="title">실시간 감시</div>
+        <div class="sub" id="watchSub">장중 1분마다 보유 종목의 손절·목표가·만기를 확인해요 (Claude 비용 없음).</div>
+        <div id="watchList" class="list mt"></div>
+      </div>
+      <div class="card">
+        <div class="title">AI 설정</div>
+        <div id="aiInfo" class="kv"></div>
+      </div>
+      <div class="card">
         <div class="title">안전장치</div>
         <ul class="bullets">
           <li>에이전트는 <code>tools.py</code> 외의 명령을 실행할 수 없고, 엔진·설정·원장을 고칠 수 없어요 (고치면 자동 복구).</li>

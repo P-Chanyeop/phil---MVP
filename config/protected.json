@@ -4,7 +4,7 @@
   "costs": {
     "_comment": "매수: 체결가 x (1 + 슬리피지) + 수수료. 매도: 체결가 x (1 - 슬리피지) - 수수료 - 증권거래세(2026년 코스피·코스닥 모두 0.20%).",
     "commission": 0.00015,
-    "sell_tax": 0.0020,
+    "sell_tax": 0.002,
     "slippage": 0.0005
   },
   "universe": {
@@ -14,27 +14,40 @@
     "min_price_krw": 1000
   },
   "limits": {
-    "max_position_pct": 0.10,
+    "max_position_pct": 0.1,
     "max_open_positions": 15,
     "max_new_positions_per_cycle": 5,
     "max_forecasts_per_cycle": 30,
     "horizon_days_min": 1,
     "horizon_days_max": 5,
     "stop_pct_min": 0.02,
-    "stop_pct_max": 0.10,
+    "stop_pct_max": 0.1,
     "trade_start": "09:05",
     "trade_end": "15:15"
   },
   "policy": {
     "_comment": "에이전트 확률이 그 종목의 과거 기저율(최근 250거래일에서 N일 뒤 상승한 비율)보다 min_edge 이상 높을 때만 매수. 확률은 'N거래일 뒤 종가 > 매수가' 에 대한 것.",
     "min_edge_vs_base_rate": 0.05,
-    "edge_classes": ["earnings", "disclosure", "news-flow", "momentum", "mean-reversion", "event", "macro", "other"],
-    "auto_ban": {"min_n": 30, "max_brier_delta": 0.01}
+    "edge_classes": [
+      "earnings",
+      "disclosure",
+      "news-flow",
+      "momentum",
+      "mean-reversion",
+      "event",
+      "macro",
+      "other"
+    ],
+    "auto_ban": {
+      "min_n": 30,
+      "max_brier_delta": 0.01
+    }
   },
   "cycle": {
-    "model": "",
+    "model": "claude-sonnet-5-5",
     "max_turns": 80,
     "timeout_minutes": 40,
-    "post_close_time": "15:45"
+    "post_close_time": "15:45",
+    "_comment": "model: claude-sonnet-5-5(기본, 장중 1회 약 $0.6) / claude-opus-5-5(약 $1.2) / 빈 문자열이면 Claude Code 기본값."
   }
 }

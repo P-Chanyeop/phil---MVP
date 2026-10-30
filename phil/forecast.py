@@ -7,7 +7,7 @@ import os
 import uuid
 
 from . import market, naver
-from .config import FORECASTS, append_jsonl, iso, load_config, load_jsonl
+from .config import FORECASTS, append_jsonl, iso, ledger_lock, load_config, load_jsonl
 
 
 class Rejected(Exception):
@@ -42,5 +42,8 @@ def record(code, horizon_days, est_prob, edge_class, note="", cycle_id=None, now
            "ref_date": market.kst_date(iso()), "est_prob": round(est_prob, 4),
            "base_rate": market.base_rate(bars, horizon_days), "edge_class": edge_class,
            "note": (note or "").strip()[:500], "status": "open"}
-    append_jsonl(FORECASTS, row)
+    with ledger_lock():
+        if any(r["code"] == code and r["status"] == "open" for r in load_jsonl(FORECASTS)):
+            raise Rejected("이 종목에 이미 열린 예측이 있음 (종목당 하나)")
+        append_jsonl(FORECASTS, row)
     return row

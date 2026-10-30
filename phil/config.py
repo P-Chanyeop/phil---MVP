@@ -13,6 +13,10 @@ CYCLES_LOG = JOURNAL / "cycles.jsonl"
 OPERATOR = JOURNAL / "operator.json"
 META = JOURNAL / "meta.json"
 UNIVERSE_CACHE = JOURNAL / "universe.json"
+KIS_LEDGER = JOURNAL / "kis-ledger.jsonl"
+KIS_TOKEN = JOURNAL / "kis-token.json"
+WATCH_EVENTS = JOURNAL / "watch-events.jsonl"
+LOCK_FILE = JOURNAL / ".ledger.lock"
 RETROS = JOURNAL / "retros"
 CYCLE_LOGS = JOURNAL / "cycle-logs"
 STRATEGY = ROOT / "strategy"
@@ -52,6 +56,37 @@ def parse_ts(s):
     except ValueError:
         return None
     return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+
+class ledger_lock:
+    """프로세스 간 원장 잠금 (웹앱 감시 루프 · 사이클 · 에이전트의 tools.py 가 동시에 쓰므로).
+    O_EXCL 로 잠금 파일을 만드는 방식이라 Windows·리눅스 모두 동작. 30초 넘은 잠금은 죽은 것으로 본다."""
+
+    def __enter__(self):
+        import time
+        JOURNAL.mkdir(parents=True, exist_ok=True)
+        deadline = time.time() + 20
+        while True:
+            try:
+                self.fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - LOCK_FILE.stat().st_mtime > 30:
+                        LOCK_FILE.unlink()
+                        continue
+                except OSError:
+                    pass
+                if time.time() > deadline:
+                    raise TimeoutError("원장 잠금 대기 시간 초과")
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        os.close(self.fd)
+        try:
+            LOCK_FILE.unlink()
+        except OSError:
+            pass
 
 
 def load_jsonl(path):
@@ -109,7 +144,7 @@ def load_env():
 
 
 def operator_state():
-    st = {"auto_loop": False, "loop_minutes": 60}
+    st = {"auto_loop": False, "loop_minutes": 120, "kis_enabled": False, "kis_enabled_at": None}
     st.update(load_json(OPERATOR, {}))
     return st
 

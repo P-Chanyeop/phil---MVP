@@ -18,8 +18,13 @@ import uuid
 
 from . import guard, ledger, market, naver, resolve, score
 from .config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, ROOT, STRATEGY,
-                     STRATEGY_HISTORY, append_jsonl, iso, load_config, load_jsonl, now_kst,
-                     now_utc, operator_state)
+                     STRATEGY_HISTORY, append_jsonl, iso, load_config, load_env, load_jsonl,
+                     now_kst, now_utc, operator_state)
+
+AUTH_HINTS = ("Failed to authenticate", "OAuth", "Invalid API key", "authentication_error",
+              "Please run /login", "not logged in", "401")
+AUTH_HELP = ("Claude 로그인이 만료됐거나 키가 잘못됐어요. 터미널에서 `claude` 실행 → `/login` 으로 다시 로그인하거나, "
+             ".env 에 ANTHROPIC_API_KEY 를 넣어 주세요. (이번 실행은 비용 0)")
 
 _lock = threading.Lock()
 CURRENT = {"running": False, "cycle_id": None, "started": None, "phase": None}
@@ -86,10 +91,13 @@ def build_prompt(cycle_id, settled, mode, why_mode):
 def agent_cmd(prompt):
     cfg = load_config()["cycle"]
     py = python_cmd()
-    allowed = [f"Bash({py} tools.py:*)", "Read", "Glob", "Grep", "WebSearch", "WebFetch",
+    # 파일 읽기는 Phil 폴더 안으로만 (서버에 다른 서비스가 있어도 그 파일은 못 읽게)
+    allowed = [f"Bash({py} tools.py:*)", "Read(./**)", "Glob(./**)", "Grep(./**)",
+               "WebSearch", "WebFetch",
                "Edit(strategy/**)", "Write(strategy/**)", "MultiEdit(strategy/**)",
                "Write(journal/retros/**)", "Edit(journal/retros/**)", "TodoWrite"]
-    disallowed = ["Read(.env)", "Read(./.env)", "Read(**/.env)"]
+    disallowed = ["Read(.env)", "Read(./.env)", "Read(**/.env)", "Read(./journal/kis-*)",
+                  "Read(~/**)", "Read(/etc/**)"]
     cmd = [claude_bin(), "-p", prompt, "--output-format", "stream-json", "--verbose",
            "--max-turns", str(cfg.get("max_turns", 80)),
            "--allowedTools", *allowed, "--disallowedTools", *disallowed]
@@ -174,9 +182,14 @@ def run_cycle(force_agent=False):
         before_fc = len(load_jsonl(FORECASTS))
         env = {k: v for k, v in os.environ.items() if not k.startswith("PHIL_")}
         env["PHIL_CYCLE_ID"] = cycle_id
+        api_key = load_env().get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:  # .env 에 API 키가 있으면 그걸로 (없으면 claude 구독 로그인)
+            env["ANTHROPIC_API_KEY"] = api_key
+        result["auth"] = "api_key" if api_key else "login"
         env["PYTHONIOENCODING"] = "utf-8"
         timeout = load_config()["cycle"].get("timeout_minutes", 40) * 60
         summary_line = None
+        auth_failed = False
         proc = subprocess.Popen(agent_cmd(build_prompt(cycle_id, settled, mode, why)), cwd=ROOT,
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
@@ -192,7 +205,12 @@ def run_cycle(force_agent=False):
                     ev = json.loads(raw)
                 except ValueError:
                     log(raw[:500])
+                    if any(h in raw for h in AUTH_HINTS):
+                        auth_failed = True
                     continue
+                if ev.get("type") == "result" and ev.get("is_error") and \
+                        any(h in str(ev.get("result", "")) for h in AUTH_HINTS):
+                    auth_failed = True
                 line = _summarize_event(ev)
                 if line:
                     log(line)
@@ -206,6 +224,9 @@ def run_cycle(force_agent=False):
         finally:
             timer.cancel()
         result["exit_code"] = proc.returncode
+        if auth_failed:
+            log("🔑 " + AUTH_HELP)
+            result.update(ok=False, error=AUTH_HELP, error_kind="auth")
 
         CURRENT["phase"] = "검증"
         reverted = guard.restore(snap)

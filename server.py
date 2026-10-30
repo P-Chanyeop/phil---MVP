@@ -14,8 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import time
 
-from phil import cycle, ledger, market, naver, policy, resolve, score
-from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, RETROS, ROOT, STRATEGY,
+from phil import cycle, kis, ledger, market, naver, policy, resolve, score, watch
+from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, RETROS, ROOT, STRATEGY, WATCH_EVENTS,
                          STRATEGY_HISTORY, load_config, load_env, load_jsonl,
                          operator_state, save_operator_state)
 
@@ -68,6 +68,10 @@ def state():
         "last_cycle": cycles[-1] if cycles else None,
         "next_auto_run": AUTO.next_run if AUTO else None,
         "policy": policy.summary()["rules"],
+        "watch": dict(watch.STATUS),
+        "kis": {"configured": kis.configured(), "enabled": operator_state().get("kis_enabled", False)},
+        "auth": "api_key" if (load_env().get("ANTHROPIC_API_KEY") or __import__("os").environ.get("ANTHROPIC_API_KEY")) else "login",
+        "model": load_config()["cycle"].get("model") or "Claude Code 기본값",
     }
 
 
@@ -153,6 +157,14 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/scan":
                 return self._send(200, market.scan(q("sort", "value"), q("query") or None,
                                                    int(q("limit", 40)), q("market") or None))
+            if p == "/api/watch":
+                return self._send(200, load_jsonl(WATCH_EVENTS)[::-1][:50])
+            if p == "/api/kis":
+                out = {"configured": kis.configured(), "enabled": operator_state().get("kis_enabled", False),
+                       "rows": list(watch.kis_rows().values())[::-1][:50]}
+                if out["configured"]:
+                    out["balance"] = cached("kis_balance", 30, kis.balance)
+                return self._send(200, out)
             if p == "/api/stock":
                 code = q("code", "")
                 if not re.fullmatch(r"\d{6}", code):
@@ -203,6 +215,13 @@ class H(BaseHTTPRequestHandler):
                 st = operator_state()
                 if "auto_loop" in body:
                     st["auto_loop"] = bool(body["auto_loop"])
+                if "kis_enabled" in body:
+                    want = bool(body["kis_enabled"])
+                    if want and not kis.configured():
+                        return self._send(400, {"error": ".env 에 한투 앱키·시크릿·계좌번호를 먼저 넣어 주세요"})
+                    if want and not st.get("kis_enabled"):
+                        st["kis_enabled_at"] = __import__("phil.config", fromlist=["iso"]).iso()
+                    st["kis_enabled"] = want
                 if "loop_minutes" in body:
                     st["loop_minutes"] = max(15, min(390, int(body["loop_minutes"])))
                 save_operator_state(st)
@@ -226,6 +245,7 @@ def main():
     for d in (RETROS, CYCLE_LOGS):
         d.mkdir(parents=True, exist_ok=True)
     AUTO = cycle.AutoLoop()
+    watch.Watcher(60)
     srv = ThreadingHTTPServer((a.host, a.port), H)
     shown = "127.0.0.1" if a.host in ("0.0.0.0", "localhost") else a.host
     print(f"🐹 Phil 실행 중 → http://{shown}:{a.port}" + (f"/?token={TOKEN}" if TOKEN else ""))

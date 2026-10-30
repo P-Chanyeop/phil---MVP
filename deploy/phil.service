@@ -1,0 +1,24 @@
+# Phil 웹앱 + 자동 반복 + 실시간 감시를 서버에서 상시 실행 (systemd)
+# install.sh 가 /etc/systemd/system/phil.service 로 복사합니다.
+[Unit]
+Description=Phil self-improving trader (Korean stocks, paper trading)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=phil
+Group=phil
+WorkingDirectory=/home/phil/phil
+ExecStart=/usr/bin/env python3 server.py --host 127.0.0.1 --port __PORT__
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# 같은 서버의 다른 서비스 보호: 시스템 파일 읽기 전용, 별도 /tmp, 권한 상승 금지
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

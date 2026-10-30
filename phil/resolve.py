@@ -12,8 +12,8 @@
 import datetime as dt
 
 from . import market, naver
-from .config import (FORECASTS, KST, LEDGER, dump_jsonl, iso, load_config, load_jsonl,
-                     now_kst)
+from .config import (FORECASTS, KST, LEDGER, dump_jsonl, iso, ledger_lock, load_config,
+                     load_jsonl, now_kst)
 from .ledger import sell_proceeds
 
 CLOSE_DONE = "15:40"
@@ -82,16 +82,21 @@ def settle_forecast(r, bars, now):
 def settle_all(now=None):
     now = now or now_kst()
     cfg = load_config()
-    entries = load_jsonl(LEDGER)
-    forecasts = load_jsonl(FORECASTS)
-    need = {e["code"] for e in entries if e["status"] == "open" or "calib" not in e}
-    need |= {r["code"] for r in forecasts if r["status"] == "open"}
+    need = {e["code"] for e in load_jsonl(LEDGER) if e["status"] == "open" or "calib" not in e}
+    need |= {r["code"] for r in load_jsonl(FORECASTS) if r["status"] == "open"}
     bars, errors = {}, []
-    for code in need:
+    for code in need:  # 네트워크는 잠금 밖에서
         try:
             bars[code] = naver.daily_bars(code, 40)
         except naver.DataError as err:
             errors.append(f"{code}: {err}")
+    with ledger_lock():
+        return _apply(bars, errors, now, cfg)
+
+
+def _apply(bars, errors, now, cfg):
+    entries = load_jsonl(LEDGER)
+    forecasts = load_jsonl(FORECASTS)
     closed, calib, fsettled = [], 0, []
     for e in entries:
         if e["code"] in bars:
