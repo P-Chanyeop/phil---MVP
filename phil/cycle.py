@@ -91,13 +91,22 @@ def build_prompt(cycle_id, settled, mode, why_mode):
 def agent_cmd(prompt):
     cfg = load_config()["cycle"]
     py = python_cmd()
-    # 파일 읽기는 Phil 폴더 안으로만 (서버에 다른 서비스가 있어도 그 파일은 못 읽게)
-    allowed = [f"Bash({py} tools.py:*)", "Read(./**)", "Glob(./**)", "Grep(./**)",
+    # 파일 읽기는 Phil 폴더 안으로만 (서버에 다른 서비스가 있어도 그 파일은 못 읽게).
+    # 앱이 phil 홈(~/phil) 안에 있을 수 있으므로 상대경로뿐 아니라 절대경로도 허용하고,
+    # 거부는 홈 전체(~/**)가 아니라 민감한 폴더만 콕 집는다. 안 그러면 거부가 우선이라
+    # 자기 전략파일(strategy/)까지 못 읽어서 자기개선 루프가 끊긴다.
+    root = str(ROOT)
+    allowed = [f"Bash({py} tools.py:*)",
+               "Read(./**)", f"Read({root}/**)",
+               "Glob(./**)", f"Glob({root}/**)",
+               "Grep(./**)", f"Grep({root}/**)",
                "WebSearch", "WebFetch",
                "Edit(strategy/**)", "Write(strategy/**)", "MultiEdit(strategy/**)",
                "Write(journal/retros/**)", "Edit(journal/retros/**)", "TodoWrite"]
-    disallowed = ["Read(.env)", "Read(./.env)", "Read(**/.env)", "Read(./journal/kis-*)",
-                  "Read(~/**)", "Read(/etc/**)"]
+    disallowed = ["Read(.env)", "Read(./.env)", "Read(**/.env)", f"Read({root}/.env)",
+                  "Read(./journal/kis-*)", f"Read({root}/journal/kis-*)",
+                  "Read(~/.claude/**)", "Read(~/.config/**)", "Read(~/.ssh/**)",
+                  "Read(~/.aws/**)", "Read(~/.cache/**)", "Read(/etc/**)"]
     cmd = [claude_bin(), "-p", prompt, "--output-format", "stream-json", "--verbose",
            "--max-turns", str(cfg.get("max_turns", 80)),
            "--allowedTools", *allowed, "--disallowedTools", *disallowed]
