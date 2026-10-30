@@ -43,8 +43,8 @@ def universe(refresh=False):
                     break
                 out[s["itemCode"]] = {
                     "name": name, "market": market, "rank": rank, "price": price,
-                    "change_pct": naver.num(s.get("fluctuationsRatio")) *
-                    (-1 if (s.get("compareToPreviousPrice") or {}).get("name") in ("FALLING", "LOWER_LIMIT") else 1),
+                    "change_pct": naver.signed_pct(s.get("fluctuationsRatio"),
+                                                   s.get("compareToPreviousPrice")),
                     "value_mil": naver.num(s.get("accumulatedTradingValue")) or 0,
                     "mcap_eok": naver.num(s.get("marketValue")) or 0,
                 }

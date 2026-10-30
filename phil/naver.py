@@ -44,6 +44,19 @@ def num(s):
     return float(m.group(0).replace(",", "")) if m else None
 
 
+def signed_pct(ratio, compare=None):
+    """등락률. 네이버는 하락 시 이미 '-6.03' 처럼 부호를 붙여 준다.
+    부호가 없는 하락 표기가 와도 맞도록, 하락 표시면 음수로 맞춘다."""
+    v = num(ratio)
+    if v is None:
+        return None
+    if (compare or {}).get("name") in ("FALLING", "LOWER_LIMIT"):
+        return -abs(v)
+    if (compare or {}).get("name") in ("RISING", "UPPER_LIMIT"):
+        return abs(v)
+    return v
+
+
 def quote(code):
     """현재가(장중) 또는 종가."""
     d = _get(f"{M}/stock/{code}/basic")
@@ -53,7 +66,7 @@ def quote(code):
         "code": code,
         "name": d.get("stockName"),
         "price": num(d.get("closePrice")),
-        "change_pct": num(d.get("fluctuationsRatio")) * (-1 if (d.get("compareToPreviousPrice") or {}).get("name") in ("FALLING", "LOWER_LIMIT") else 1),
+        "change_pct": signed_pct(d.get("fluctuationsRatio"), d.get("compareToPreviousPrice")),
         "market_status": d.get("marketStatus"),
         "tradable": d.get("tradableStatusCode") == "ok"
                     and (d.get("tradeStopType") or {}).get("name") == "TRADING",
@@ -73,7 +86,7 @@ def info(code):
 def index_quote(symbol="KOSPI"):
     d = _get(f"{M}/index/{symbol}/basic")
     return {"symbol": symbol, "name": d.get("stockName"), "price": num(d.get("closePrice")),
-            "change_pct": num(d.get("fluctuationsRatio")) * (-1 if (d.get("compareToPreviousPrice") or {}).get("name") == "FALLING" else 1),
+            "change_pct": signed_pct(d.get("fluctuationsRatio"), d.get("compareToPreviousPrice")),
             "market_status": d.get("marketStatus")}
 
 

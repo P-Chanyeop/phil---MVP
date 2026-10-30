@@ -58,6 +58,15 @@ class TestCosts(unittest.TestCase):
         self.assertGreater(market.base_rate(bars(closes=list(range(1, 100))), 3), 0.95)
 
 
+class TestNaverSign(unittest.TestCase):
+    def test_signed_pct(self):
+        from phil import naver
+        self.assertEqual(naver.signed_pct("-6.03", {"name": "FALLING"}), -6.03)
+        self.assertEqual(naver.signed_pct("6.03", {"name": "FALLING"}), -6.03)
+        self.assertEqual(naver.signed_pct("3.33", {"name": "RISING"}), 3.33)
+        self.assertEqual(naver.signed_pct("0.00", {"name": "UNCHANGED"}), 0.0)
+
+
 class TestBuy(Tmp):
     def buy(self, est=0.6, **kw):
         args = dict(code="005930", est_prob=est, horizon_days=3, stop_pct=0.04, target_pct=0.06,
