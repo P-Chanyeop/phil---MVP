@@ -110,7 +110,8 @@ def main():
                            a.rationale, amount_krw=a.amount)
             out({"bought": e["id"], "name": e["name"], "qty": e["qty"], "fill": e["entry_price"],
                  "cost_krw": e["cost_krw"], "stop": e["stop_price"], "target": e["target_price"],
-                 "base_rate": e["base_rate"], "edge": e["edge"]})
+                 "base_rate": e["base_rate"], "edge": e["edge"],
+                 "type": "탐색 매수 (작게)" if e.get("exploration") else "정규 매수"})
         elif a.cmd == "sell":
             e = ledger.sell(a.id, a.reason)
             out({"sold": e["id"], "name": e["name"], "ret_pct": e["ret_pct"], "pnl_krw": e["pnl_krw"]})

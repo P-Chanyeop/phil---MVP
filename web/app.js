@@ -45,7 +45,7 @@ function spark(curve, start) {
 function openItem(o) {
   return `<div class="item" data-pos="${esc(o.id)}"><div class="q">${esc(o.name)} <span class="sub">${esc(o.code)}</span></div>
     <div class="meta"><span class="chip">${o.qty}주 @ ${Math.round(o.entry).toLocaleString()}</span><span class="${ud(o.unrealized_pct)}">${sp(o.unrealized_pct)}</span>
-    <span>손절 ${Math.round(o.stop).toLocaleString()}</span>${o.target ? `<span>목표 ${Math.round(o.target).toLocaleString()}</span>` : ""}<span>${o.horizon_days}일 보유</span><span>${esc(o.edge_class)}</span></div></div>`;
+    <span>손절 ${Math.round(o.stop).toLocaleString()}</span>${o.target ? `<span>목표 ${Math.round(o.target).toLocaleString()}</span>` : ""}<span>${o.horizon_days}일 보유</span><span>${esc(o.edge_class)}</span>${o.exploration ? '<span class="chip gray">탐색</span>' : ""}</div></div>`;
 }
 function closedItem(e) {
   return `<div class="item" data-pos="${esc(e.id)}"><div class="q">${esc(e.name)} <span class="sub">${esc(e.code)}</span></div>

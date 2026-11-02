@@ -100,12 +100,22 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
     bars = naver.daily_bars(code, 260)
     br = market.base_rate(bars, horizon_days)
     edge = round(est_prob - br, 4)
-    if edge < cfg["policy"]["min_edge_vs_base_rate"]:
-        raise Rejected(f"엣지 부족: 내 확률 {est_prob} − 기저율 {br} = {edge:+.3f} "
-                       f"< {cfg['policy']['min_edge_vs_base_rate']}")
+    pol = cfg["policy"]
+    exp = pol.get("exploration") or {}
+    exploration = False
+    if edge < pol["min_edge_vs_base_rate"]:
+        if not exp or edge < exp["min_edge"]:
+            raise Rejected(f"엣지 부족: 내 확률 {est_prob} − 기저율 {br} = {edge:+.3f} "
+                           f"< 탐색 최소 {exp.get('min_edge', pol['min_edge_vs_base_rate'])}")
+        today = market.kst_date(iso())
+        n_today = sum(1 for x in entries if x.get("exploration") and market.kst_date(x["ts"]) == today)
+        if n_today >= exp["max_per_day"]:
+            raise Rejected(f"오늘 탐색 매수 한도({exp['max_per_day']}건) 도달 — 엣지 {edge:+.3f} 는 "
+                           f"정규 매수 기준 {pol['min_edge_vs_base_rate']} 미만")
+        exploration = True
 
     eq = equity(entries, cfg)
-    max_amt = eq * lim["max_position_pct"]
+    max_amt = eq * (exp["position_pct"] if exploration else lim["max_position_pct"])
     amount = min(amount_krw or max_amt, max_amt, cash(entries, cfg))
     price = q["price"]
     qty = math.floor(amount / (price * (1 + costs["slippage"]) * (1 + costs["commission"])))
@@ -121,7 +131,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "stop_price": round(price * (1 - stop_pct), 2),
         "target_price": round(price * (1 + target_pct), 2) if target_pct else None,
         "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
-        "edge_class": edge_class, "rationale": rationale.strip(),
+        "edge_class": edge_class, "rationale": rationale.strip(), "exploration": exploration,
         "status": "open", "last_price": price,
     }
     # 네트워크 조회는 잠금 밖에서, 최종 확인과 기록은 잠금 안에서 (다른 프로세스와 경합 방지)
@@ -195,5 +205,6 @@ def status(refresh_prices=True):
             "unrealized_pct": round(((prices.get(e["code"]) or e["entry_price"]) / e["entry_price"] - 1) * 100, 2),
             "stop": e["stop_price"], "target": e["target_price"], "horizon_days": e["horizon_days"],
             "bought": e["ts"], "est_prob": e["est_prob"], "base_rate": e["base_rate"],
-            "edge_class": e["edge_class"]} for e in open_pos],
+            "edge_class": e["edge_class"], "exploration": e.get("exploration", False)}
+            for e in open_pos],
     }

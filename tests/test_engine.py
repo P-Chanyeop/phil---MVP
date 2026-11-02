@@ -86,8 +86,23 @@ class TestBuy(Tmp):
             self.buy()
 
     def test_edge_required(self):
-        with self.assertRaises(ledger.Rejected):
-            self.buy(est=0.55)
+        with self.assertRaises(ledger.Rejected):  # 엣지 0.0175 < 탐색 최소 0.02
+            self.buy(est=0.52)
+
+    def test_exploration_buy_small_and_capped(self):
+        e = self.buy(est=0.54)          # 엣지 ≈ 0.0375: 정규(0.05) 미만, 탐색(0.02) 이상
+        self.assertTrue(e["exploration"])
+        self.assertLessEqual(e["cost_krw"], 200_000)   # 자산의 2%
+        codes = ["000660", "035420", "051910"]
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ["005930"] + codes}
+        with mock.patch("phil.market.universe", lambda refresh=False: uni):
+            self.buy(est=0.54, code="000660")
+            self.buy(est=0.54, code="035420")
+            with self.assertRaises(ledger.Rejected):   # 하루 3건 한도
+                self.buy(est=0.54, code="051910")
+            big = self.buy(est=0.62, code="051910")    # 정규 매수는 한도와 무관
+        self.assertFalse(big["exploration"])
+        self.assertGreater(big["cost_krw"], 500_000)
 
     def test_limits(self):
         for kw in ({"horizon_days": 6}, {"stop_pct": 0.01}, {"stop_pct": 0.2},

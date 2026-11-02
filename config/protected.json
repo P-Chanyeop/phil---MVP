@@ -41,6 +41,12 @@
     "auto_ban": {
       "min_n": 30,
       "max_brier_delta": 0.01
+    },
+    "exploration": {
+      "_comment": "탐색 매수: 엣지가 min_edge 이상 ~ min_edge_vs_base_rate 미만인 후보를 작게 산다. 실제 매매 데이터를 쌓기 위한 것.",
+      "min_edge": 0.02,
+      "position_pct": 0.02,
+      "max_per_day": 3
     }
   },
   "cycle": {

@@ -67,7 +67,10 @@ def summary():
     lim = cfg["limits"]
     return {
         "rules": [
-            f"엣지(내 확률 − 기저율) ≥ {cfg['policy']['min_edge_vs_base_rate']}",
+            f"정규 매수: 엣지(내 확률 − 기저율) ≥ {cfg['policy']['min_edge_vs_base_rate']}",
+            (lambda x: f"탐색 매수: 엣지 {x['min_edge']}~{cfg['policy']['min_edge_vs_base_rate']} 이면 자산의 "
+                       f"{x['position_pct']:.0%} 로 작게, 하루 {x['max_per_day']}건까지")(cfg['policy']['exploration'])
+            if cfg['policy'].get('exploration') else "탐색 매수 없음",
             f"종목당 최대 자산의 {lim['max_position_pct']:.0%}, 동시 보유 {lim['max_open_positions']}종목, "
             f"사이클당 신규 {lim['max_new_positions_per_cycle']}종목",
             f"보유 {lim['horizon_days_min']}~{lim['horizon_days_max']}거래일, 손절 {lim['stop_pct_min']:.0%}~{lim['stop_pct_max']:.0%} 필수",
