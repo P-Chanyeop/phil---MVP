@@ -75,6 +75,7 @@ def settle_forecast(r, bars, now):
         r["status"] = "up" if hb[4] > r["ref_price"] else "down"
         r["settle_close"] = hb[4]
         r["settle_date"] = hb[0]
+        r["settled_ts"] = iso()
         return True
     return False
 

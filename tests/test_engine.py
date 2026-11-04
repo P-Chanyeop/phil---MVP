@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from phil import config, forecast, guard, kis, ledger, market, policy, resolve, score, watch  # noqa: E402
+from phil import config, forecast, guard, kis, ledger, market, notify, policy, resolve, score, watch  # noqa: E402
 
 KST = config.KST
 OPEN_TIME = dt.datetime(2026, 10, 14, 10, 0, tzinfo=KST)  # 수요일 장중
@@ -32,7 +32,8 @@ class Tmp(unittest.TestCase):
                              (score, "FORECASTS", "f.jsonl"), (forecast, "FORECASTS", "f.jsonl"),
                              (resolve, "FORECASTS", "f.jsonl"), (score, "META", "m.json"),
                              (watch, "KIS_LEDGER", "k.jsonl"), (watch, "WATCH_EVENTS", "w.jsonl"),
-                             (config, "LOCK_FILE", ".lock")]:
+                             (config, "LOCK_FILE", ".lock"), (notify, "LEDGER", "l.jsonl"),
+                             (notify, "FORECASTS", "f.jsonl"), (notify, "NOTIFY_STATE", "n.json")]:
             mock.patch.object(mod, name, self.d / f).start()
         mock.patch("phil.market.universe", lambda refresh=False: {
             "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
@@ -248,6 +249,37 @@ class TestWatch(Tmp):
         watch.sync_kis(now)
         self.assertEqual(len(calls), 1)
         self.assertEqual(watch.kis_rows()[self.e["id"]]["status"], "buy_failed")
+
+
+class TestNotify(Tmp):
+    def test_notifies_once_per_event(self):
+        sent = []
+        mock.patch("phil.notify.configured", lambda: True).start()
+        mock.patch("phil.notify.send", lambda t: sent.append(t)).start()
+        self.assertEqual(notify.scan_and_notify(), 0)          # 첫 실행은 현재 상태만 기억
+        e = ledger.buy("005930", 0.62, 3, 0.04, 0.06, "earnings", "실적 서프라이즈 테스트 근거")
+        notify.scan_and_notify()
+        notify.scan_and_notify()                                # 중복 없음
+        self.assertEqual(len(sent), 1)
+        self.assertIn("매수", sent[0])
+        ledger.close_position(e["id"], 103.0, "목표가 도달 (실시간)")
+        notify.scan_and_notify()
+        self.assertEqual(len(sent), 2)
+        self.assertIn("청산", sent[1])
+
+    def test_failed_send_retries_later(self):
+        mock.patch("phil.notify.configured", lambda: True).start()
+        notify.scan_and_notify()
+        ledger.buy("005930", 0.62, 3, 0.04, 0.06, "earnings", "실적 서프라이즈 테스트 근거")
+
+        def boom(t):
+            raise notify.NotifyError("network")
+        with mock.patch("phil.notify.send", boom):
+            notify.scan_and_notify()
+        sent = []
+        with mock.patch("phil.notify.send", lambda t: sent.append(t)):
+            notify.scan_and_notify()
+        self.assertEqual(len(sent), 1)
 
 
 class TestGuard(unittest.TestCase):

@@ -14,8 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import time
 
-from phil import cycle, kis, ledger, market, naver, policy, resolve, score, watch
-from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, RETROS, ROOT, STRATEGY, WATCH_EVENTS,
+from phil import cycle, kis, ledger, market, naver, notify, policy, resolve, score, watch
+from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, INTRADAY, LEDGER, RETROS, ROOT, STRATEGY, WATCH_EVENTS,
                          STRATEGY_HISTORY, load_config, load_env, load_jsonl,
                          operator_state, save_operator_state)
 
@@ -52,6 +52,107 @@ def cached(key, ttl, fn):
         val = {"error": str(e)[:200]} if not hit else hit[1]
     _CACHE[key] = (time.time(), val)
     return val
+
+
+def _quote(code):
+    return cached("q:" + code, 5, lambda: naver.quote(code))
+
+
+def live():
+    """보유 종목 실시간 (5초 캐시) + 오늘 장중 자산 곡선."""
+    cfg = load_config()
+    entries = load_jsonl(LEDGER)
+    pos, prices = [], {}
+    for e in entries:
+        if e["status"] != "open":
+            continue
+        q = _quote(e["code"])
+        price = q.get("price") if isinstance(q, dict) else None
+        price = price or e.get("last_price") or e["entry_price"]
+        prices[e["code"]] = price
+        proceeds = ledger.sell_proceeds(price, e["qty"], cfg["costs"])[1]
+        lo, hi = e["stop_price"], e.get("target_price") or e["entry_price"] * 1.1
+        pos.append({"id": e["id"], "code": e["code"], "name": e["name"], "qty": e["qty"],
+                    "price": price, "day_change_pct": q.get("change_pct") if isinstance(q, dict) else None,
+                    "entry": e["entry_price"], "stop": e["stop_price"], "target": e.get("target_price"),
+                    "pnl_krw": proceeds - e["cost_krw"],
+                    "pnl_pct": round((proceeds / e["cost_krw"] - 1) * 100, 2),
+                    "progress": max(0.0, min(1.0, (price - lo) / (hi - lo))) if hi > lo else 0.5,
+                    "entry_progress": max(0.0, min(1.0, (e["entry_price"] - lo) / (hi - lo))) if hi > lo else 0.5,
+                    "horizon_days": e["horizon_days"], "exploration": e.get("exploration", False),
+                    "edge_class": e["edge_class"]})
+    today = __import__("phil.config", fromlist=["now_kst"]).now_kst().date().isoformat()
+    intraday = [r for r in load_jsonl(INTRADAY)[-500:] if r.get("date") == today]
+    return {"positions": pos, "equity_krw": ledger.equity(entries, cfg, prices),
+            "start_krw": cfg["sim_bankroll_krw"], "intraday": intraday, "ts": time.time()}
+
+
+TOOL_WORDS = {"stock": "살펴보는 중", "news": "뉴스 읽는 중", "forecast": "예측 기록",
+              "buy": "매수 주문", "sell": "매도 주문", "scan": "종목 훑어보는 중",
+              "market": "시장 분위기 확인", "history": "지난 기록 돌아보는 중",
+              "status": "계좌 확인", "score": "성적 확인", "policy": "규칙 확인"}
+
+
+def _humanize(line, names):
+    m = re.search(r"tools\.py (\w+)(?: (?:--code )?(\d{6}))?", line)
+    if m:
+        word = TOOL_WORDS.get(m.group(1), m.group(1))
+        nm = names.get(m.group(2), m.group(2)) if m.group(2) else ""
+        return f"{nm} {word}".strip()
+    m = re.search(r"WebSearch (.+)", line)
+    if m:
+        return f"검색: {m.group(1)[:60]}"
+    if "WebFetch" in line:
+        return "기사·공시 읽는 중"
+    if "Write" in line and "retros" in line:
+        return "회고 쓰는 중"
+    if ("Edit" in line or "Write" in line) and "strategy" in line:
+        return "전략 고치는 중"
+    return None
+
+
+def feed(limit=40):
+    items = []
+    for e in load_jsonl(LEDGER):
+        kind = "탐색 매수" if e.get("exploration") else "매수"
+        items.append({"ts": e["ts"], "icon": "🐹", "text": f"{kind} · {e['name']} {e['qty']}주 @ {e['entry_price']:,.0f}원",
+                      "sub": e["rationale"][:120]})
+        if e["status"] == "closed" and e.get("exit_ts"):
+            items.append({"ts": e["exit_ts"], "icon": "📈" if e["pnl_krw"] > 0 else "📉",
+                          "text": f"청산 · {e['name']} {e['ret_pct']:+.2f}% ({e['pnl_krw']:+,}원)",
+                          "sub": e.get("exit_reason", "")})
+    for r in load_jsonl(FORECASTS):
+        items.append({"ts": r["ts"], "icon": "🔮",
+                      "text": f"예측 · {r['name']} {r['horizon_days']}일 뒤 오를 확률 {round(r['est_prob'] * 100)}% (기저율 {round(r['base_rate'] * 100)}%)",
+                      "sub": r.get("note", "")[:120]})
+        if r["status"] in ("up", "down") and r.get("settled_ts"):
+            hit = (r["est_prob"] > 0.5) == (r["status"] == "up")
+            items.append({"ts": r["settled_ts"], "icon": "✅" if hit else "❌",
+                          "text": f"예측 결과 · {r['name']} {'올랐어요' if r['status'] == 'up' else '내렸어요'} — {'맞힘' if hit else '빗나감'}",
+                          "sub": ""})
+    for w in load_jsonl(WATCH_EVENTS)[-100:]:
+        if w.get("kind") in ("kis", "kis_error"):
+            items.append({"ts": w["ts"], "icon": "🏦" if w["kind"] == "kis" else "⚠️", "text": w["msg"], "sub": ""})
+    for c in load_jsonl(CYCLES_LOG)[-60:]:
+        if c.get("mode"):
+            items.append({"ts": c.get("finished"), "icon": "🔁" if c.get("ok") else "⚠️",
+                          "text": "사이클 끝 · " + ((c.get("summary") or {}).get("note") or c.get("error") or ""),
+                          "sub": f"매수 {len(c.get('new_bets') or [])} · 예측 {c.get('new_forecasts', 0)}" +
+                                 (f" · ${c['cost_usd']:.2f}" if c.get("cost_usd") else "")})
+    items = [i for i in items if i.get("ts")]
+    items.sort(key=lambda i: i["ts"], reverse=True)
+    now_doing = None
+    if cycle.CURRENT.get("running") and cycle.CURRENT.get("cycle_id"):
+        f = CYCLE_LOGS / f"{cycle.CURRENT['cycle_id']}.log"
+        if f.exists():
+            names = {k: v["name"] for k, v in market.universe().items()}
+            for ln in f.read_text(encoding="utf-8").splitlines()[::-1]:
+                h = _humanize(ln, names)
+                if h:
+                    now_doing = h
+                    break
+        now_doing = now_doing or cycle.CURRENT.get("phase")
+    return {"now": now_doing, "items": items[:limit]}
 
 
 def state():
@@ -157,6 +258,13 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/scan":
                 return self._send(200, market.scan(q("sort", "value"), q("query") or None,
                                                    int(q("limit", 40)), q("market") or None))
+            if p == "/api/live":
+                return self._send(200, live())
+            if p == "/api/feed":
+                return self._send(200, feed())
+            if p == "/api/notify":
+                return self._send(200, {"token_set": bool(notify.token()), "chat": operator_state().get("telegram_chat_name"),
+                                        "configured": notify.configured(), "error": watch.STATUS.get("notify_error")})
             if p == "/api/watch":
                 return self._send(200, load_jsonl(WATCH_EVENTS)[::-1][:50])
             if p == "/api/kis":
@@ -207,6 +315,17 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if p == "/api/cycle/stop":
                 return self._send(200, {"ok": cycle.stop_current()})
+            if p == "/api/notify/detect":
+                try:
+                    return self._send(200, {"chat": notify.detect_chat()})
+                except notify.NotifyError as e:
+                    return self._send(400, {"error": str(e)})
+            if p == "/api/notify/test":
+                try:
+                    notify.send("🐹 Phil 알림 테스트 — 연결됐어요! 매수·청산·예측 결과를 여기로 보내드릴게요.")
+                    return self._send(200, {"ok": True})
+                except notify.NotifyError as e:
+                    return self._send(400, {"error": str(e)})
             if p == "/api/settle":
                 r = resolve.settle_all()
                 _CACHE.pop("status", None)

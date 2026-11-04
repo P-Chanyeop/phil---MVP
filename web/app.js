@@ -55,15 +55,18 @@ function closedItem(e) {
 async function loadHome() {
   try { S = await api("/api/state"); } catch (e) { $("#runPill").textContent = "서버 연결 끊김"; return; }
   const sc = S.score, t = sc.trades, cal = sc.calibration;
-  $("#equity").textContent = won(sc.equity_krw);
-  $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> · 시작 ${won(sc.bankroll_start_krw)}` + (sc.kospi_return_pct != null ? ` · 같은 기간 코스피 <span class="${ud(sc.kospi_return_pct)}">${sp(sc.kospi_return_pct)}</span>` : "");
+  if (!(LIVE && LIVE.positions.length)) $("#equity").textContent = won(sc.equity_krw);
+  if (!(LIVE && LIVE.positions.length)) $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> · 시작 ${won(sc.bankroll_start_krw)}` + (sc.kospi_return_pct != null ? ` · 같은 기간 코스피 <span class="${ud(sc.kospi_return_pct)}">${sp(sc.kospi_return_pct)}</span>` : "");
   $("#sKospi").textContent = sc.alpha_pct == null ? "—" : sp(sc.alpha_pct);
   $("#sKospi").className = ud(sc.alpha_pct);
   $("#sWin").textContent = t.n ? pct(t.win_rate) : "—";
   $("#sFc").textContent = sc.forecasts.total;
   $("#sBrier").textContent = cal.n ? (cal.brier_delta < 0 ? "더 정확" : "덜 정확") : "—";
   $("#sBrier").className = cal.n ? (cal.brier_delta < 0 ? "pos" : "neg") : "";
-  spark(sc.equity_curve, sc.bankroll_start_krw);
+  if (chartMode === "all" || !LIVE || (LIVE.intraday || []).length < 2) {
+    spark(sc.equity_curve, sc.bankroll_start_krw);
+    $("#chartNote").textContent = chartMode === "all" ? "청산 기준 누적" : "오늘 장중 기록 없음";
+  }
   const mk = S.market || {};
   const idx = (k) => mk[k] && mk[k].price ? `${mk[k].name} ${mk[k].price.toLocaleString()} <span class="${ud(mk[k].change_pct)}">${sp(mk[k].change_pct)}</span>` : "";
   $("#marketLine").innerHTML = `${mk.can_trade_now ? "🟢 장중" : "⚪ " + esc(mk.reason || "")} · ${idx("KOSPI")} · ${idx("KOSDAQ")}`;
@@ -85,7 +88,7 @@ async function loadHome() {
   if (S.watch && S.watch.watching) sub += ` · 실시간 감시 ${S.watch.watching}종목`;
   if (S.operator.auto_loop) sub += S.next_auto_run ? ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후` : " · 자동 반복: 장중과 장 마감 후(15:45)에 실행";
   $("#cycleSub").textContent = sub;
-  $("#openList").innerHTML = (S.status.open || []).map(openItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
+  if (!LIVE) $("#openList").innerHTML = (S.status.open || []).map(openItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
   if (run || logFollow) loadLog();
 }
 async function loadPositions() {
@@ -191,7 +194,21 @@ document.addEventListener("click", async (ev) => {
 });
 
 // 설정
+async function loadNotify() {
+  try {
+    const n = await api("/api/notify");
+    $("#tgBadge").textContent = n.configured ? "ON" : "OFF"; $("#tgBadge").classList.toggle("on", n.configured);
+    $("#tgInfo").innerHTML = !n.token_set
+      ? `1. 텔레그램에서 <b>@BotFather</b> 검색 → <code>/newbot</code> → 이름 입력 → <b>토큰</b>을 받아요<br>2. 서버 <code>.env</code> 의 <code>PHIL_TELEGRAM_BOT_TOKEN=</code> 뒤에 붙여넣고 재시작<br>3. 만든 봇에게 아무 메시지나 보내고 아래 <b>채팅 연결</b>`
+      : n.configured ? `<b>연결됨</b> · ${esc(n.chat || "")}<br>${n.error ? `<span class="neg">${esc(n.error)}</span>` : "매수·청산·예측 결과를 보내드려요."}`
+      : `봇 토큰 확인됨. 텔레그램에서 <b>내 봇에게 아무 메시지나 보낸 뒤</b> 아래 <b>채팅 연결</b>을 눌러 주세요.`;
+  } catch (e) { $("#tgInfo").textContent = "확인 실패: " + e.message; }
+}
+$("#btnTgDetect").onclick = async () => { try { const r = await api("/api/notify/detect", {}); toast(`연결됐어요: ${r.chat}`); loadNotify(); } catch (e) { toast(e.message); } };
+$("#btnTgTest").onclick = async () => { try { await api("/api/notify/test", {}); toast("테스트 알림을 보냈어요"); } catch (e) { toast(e.message); } };
+
 async function loadSettings() {
+  loadNotify();
   $("#policyRules").textContent = "엔진 규칙: " + (S?.policy || []).join(" · ");
   $("#aiInfo").innerHTML = `<b>모델</b>${esc(S?.model)}<br><b>로그인 방식</b>${S?.auth === "api_key" ? "API 키 (.env 의 ANTHROPIC_API_KEY, 사용한 만큼 결제)" : "Claude 구독 로그인 (만료되면 터미널에서 claude → /login)"}`;
   try {
@@ -217,13 +234,68 @@ document.addEventListener("click", async (ev) => {
   const j = await api("/api/cycle-log?id=" + encodeURIComponent(l.dataset.log)); sheet(`<pre class="log">${esc(j.text || "(로그 없음)")}</pre>`);
 });
 
+// 실시간: 보유 종목 가격(5초), 오늘 자산 곡선, 활동 피드
+let LIVE = null, chartMode = "today", lastPrices = {}, feedTop = null;
+document.querySelectorAll("#chartChips button").forEach((b) => b.onclick = () => {
+  chartMode = b.dataset.chart; document.querySelectorAll("#chartChips button").forEach((x) => x.classList.toggle("on", x === b));
+  loadHome(); if (chartMode === "today") loadLive();
+});
+function intradayChart(rows, start) {
+  const svg = $("#spark");
+  const eq = rows.map((r) => r.equity), k0 = rows.find((r) => r.kospi)?.kospi;
+  const kos = rows.map((r) => (k0 && r.kospi ? eq[0] * r.kospi / k0 : null));
+  const all = eq.concat(kos.filter((v) => v != null)), lo = Math.min(...all), hi = Math.max(...all), rng = hi - lo || 1;
+  const path = (vals) => vals.map((v, i) => v == null ? "" : `${i ? "L" : "M"}${(i / (vals.length - 1) * 300).toFixed(1)} ${(54 - (v - lo) / rng * 48).toFixed(1)}`).join(" ");
+  const d = path(eq);
+  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--accent-soft)"/>` +
+    (k0 ? `<path d="${path(kos)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>` : "") +
+    `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  const chg = (eq[eq.length - 1] / eq[0] - 1) * 100;
+  $("#chartNote").innerHTML = `오늘 ${rows[0].t}~${rows[rows.length - 1].t} · Phil <span class="${ud(chg)}">${sp(chg)}</span>` + (k0 ? ` · <span style="opacity:.7">점선 코스피</span>` : "");
+}
+function liveItem(o) {
+  const prev = lastPrices[o.id], dir = prev == null || prev === o.price ? "" : o.price > prev ? "flash-up" : "flash-down";
+  lastPrices[o.id] = o.price;
+  return `<div class="pos-live" data-pos="${esc(o.id)}">
+    <div class="pos-head"><div><span class="pos-name">${esc(o.name)}</span> ${o.exploration ? '<span class="chip gray">탐색</span>' : ""}
+      <div class="sub">${o.qty}주 · 매수 ${Math.round(o.entry).toLocaleString()} · ${o.horizon_days}일 · ${esc(o.edge_class)}</div></div>
+      <div style="text-align:right"><div class="pos-price ${dir}">${Math.round(o.price).toLocaleString()}</div>
+      <div class="pos-pnl ${ud(o.pnl_pct)}">${sp(o.pnl_pct)} · ${won(o.pnl_krw, 1)}</div></div></div>
+    <div class="bar"><span class="entry" style="left:${(o.entry_progress * 100).toFixed(1)}%"></span><span class="now" style="left:${(o.progress * 100).toFixed(1)}%"></span></div>
+    <div class="bar-labels"><span>손절 ${Math.round(o.stop).toLocaleString()}</span><span>${o.target ? "목표 " + Math.round(o.target).toLocaleString() : "목표 없음 (만기 청산)"}</span></div></div>`;
+}
+async function loadLive() {
+  try { LIVE = await api("/api/live"); } catch { return; }
+  if (LIVE.positions.some((o) => !POS.find((x) => x.id === o.id))) loadPositions();
+  $("#openList").innerHTML = LIVE.positions.map(liveItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
+  $("#liveTs").textContent = LIVE.positions.length ? "실시간 · " + new Date(LIVE.ts * 1000).toLocaleTimeString("ko-KR") : "";
+  if (LIVE.positions.length) {
+    $("#equity").textContent = won(LIVE.equity_krw);
+    const r = (LIVE.equity_krw / LIVE.start_krw - 1) * 100;
+    $("#pnl").innerHTML = `<span class="${ud(r)}">${sp(r)}</span> · 시작 ${won(LIVE.start_krw)} · 실시간`;
+  }
+  if (chartMode === "today" && LIVE.intraday.length >= 2) intradayChart(LIVE.intraday, LIVE.start_krw);
+}
+async function loadFeed() {
+  let f; try { f = await api("/api/feed"); } catch { return; }
+  $("#nowDoing").classList.toggle("hidden", !f.now);
+  if (f.now) $("#nowText").textContent = "Phil 이 지금 " + f.now;
+  const top = f.items[0] && f.items[0].ts;
+  $("#feedList").innerHTML = f.items.slice(0, 25).map((x, i) => `<div class="feed-item ${feedTop && x.ts > feedTop ? "feed-new" : ""}"><div class="feed-icon">${x.icon}</div>
+    <div><div class="feed-text">${esc(x.text)}</div>${x.sub ? `<div class="feed-sub">${esc(x.sub)}</div>` : ""}<div class="feed-sub">${ago(x.ts)}</div></div></div>`).join("") || `<div class="empty">아직 활동이 없어요. 장중에 사이클이 돌면 여기에 쌓여요.</div>`;
+  feedTop = top || feedTop;
+}
+
 async function refresh() {
   await loadHome();
   if (currentTab === "home" && S?.current.running) loadPositions();
   try { const rs = await api("/api/retros"); if (lastRetroCount != null && rs.length > lastRetroCount && currentTab !== "journal") $("#journalDot").classList.remove("hidden"); lastRetroCount = rs.length; } catch {}
 }
 refresh().then(loadPositions);
+loadLive(); loadFeed();
 setInterval(refresh, 5000);
+setInterval(() => { if (currentTab === "home" && !document.hidden) loadLive(); }, 5000);
+setInterval(() => { if (currentTab === "home" && !document.hidden) loadFeed(); }, 8000);
 
 $("#btnKis").onclick = async () => {
   const on = $("#kisBadge").textContent === "ON";

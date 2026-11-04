@@ -93,3 +93,25 @@ details summary{cursor:pointer;font-weight:700;font-size:14px;color:var(--accent
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:13px;margin-top:10px}
 .grid2 span:nth-child(odd){color:var(--muted)}
 .news a{color:var(--ink);text-decoration:none}.news .item{cursor:default}
+
+.nowdoing{display:flex;align-items:center;gap:10px;background:var(--ink);color:var(--bg);border-radius:16px;padding:12px 16px;margin:12px 0;font-weight:700;font-size:14px}
+.pulse-dot{width:10px;height:10px;border-radius:50%;background:var(--accent-2);animation:pulse 1.2s infinite;flex:none}
+.pos-live{padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.pos-live:last-child{border-bottom:0}
+.pos-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.pos-name{font-weight:800;font-size:15px}
+.pos-price{font-weight:800;font-size:16px;font-variant-numeric:tabular-nums;transition:background .4s;border-radius:6px;padding:0 4px}
+.pos-price.flash-up{background:rgba(210,64,46,.18)}.pos-price.flash-down{background:rgba(46,107,210,.18)}
+.pos-pnl{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{position:relative;height:8px;border-radius:999px;margin:10px 0 4px;background:linear-gradient(90deg,#2E6BD2 0%,var(--line) 45%,var(--line) 55%,#D2402E 100%);opacity:.9}
+.bar .now{position:absolute;top:-4px;width:16px;height:16px;border-radius:50%;background:var(--card);border:3px solid var(--ink);transform:translateX(-50%);transition:left .6s ease}
+.bar .entry{position:absolute;top:-3px;width:2px;height:14px;background:var(--ink);opacity:.5;transform:translateX(-50%)}
+.bar-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.feed-item{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.feed-item:last-child{border-bottom:0}
+.feed-icon{font-size:18px;line-height:1.2;flex:none}
+.feed-text{font-size:13px;font-weight:700;line-height:1.4}
+.feed-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.feed-new{animation:fadein .8s}
+@keyframes fadein{from{background:var(--accent-soft)}to{background:transparent}}
+#chartChips .chipbtn{padding:5px 12px;font-size:12px}

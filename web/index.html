@@ -27,6 +27,8 @@
           </div>
           <img src="phil.svg" class="mascot" alt="Phil">
         </div>
+        <div class="chips mt" id="chartChips"><button data-chart="today" class="chipbtn on">오늘</button><button data-chart="all" class="chipbtn">전체</button></div>
+        <div class="sub" id="chartNote"></div>
         <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
         <div class="stats">
           <div><b id="sKospi">—</b><span>코스피 대비</span></div>
@@ -61,9 +63,17 @@
         <pre id="liveLog" class="log hidden"></pre>
       </div>
 
+      <div id="nowDoing" class="nowdoing hidden"><span class="pulse-dot"></span><span id="nowText">Phil 이 생각하는 중…</span></div>
+
       <div class="card">
-        <div class="title">보유 포지션</div>
+        <div class="row between"><div class="title">보유 포지션</div><span class="sub" id="liveTs"></span></div>
         <div id="openList" class="list"></div>
+      </div>
+
+      <div class="card">
+        <div class="title">활동</div>
+        <div class="sub">Phil 이 한 일을 시간순으로 보여줘요.</div>
+        <div id="feedList" class="list mt"></div>
       </div>
 
       <div class="card">
@@ -128,6 +138,18 @@
         <button id="btnKis" class="btn primary mt" style="width:100%">연동 켜기</button>
         <div class="title mt">한투 주문 기록</div>
         <div id="kisList" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="row between">
+          <div class="title">휴대폰 알림 (텔레그램)</div>
+          <span id="tgBadge" class="badge">OFF</span>
+        </div>
+        <div class="sub">매수·청산·예측 결과가 생기면 텔레그램으로 바로 알려드려요.</div>
+        <div id="tgInfo" class="sub mt" style="line-height:1.7">확인 중…</div>
+        <div class="row gap mt">
+          <button id="btnTgDetect" class="btn primary grow">채팅 연결</button>
+          <button id="btnTgTest" class="btn ghost">테스트</button>
+        </div>
       </div>
       <div class="card">
         <div class="title">실시간 감시</div>

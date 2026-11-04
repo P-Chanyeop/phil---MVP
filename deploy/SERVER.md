@@ -49,6 +49,13 @@ SSH 를 끊어도 서버에서 계속 돕니다.
 2. `sudo -u phil nano /home/phil/phil/.env` 에 `PHIL_KIS_APP_KEY`, `PHIL_KIS_APP_SECRET`, `PHIL_KIS_ACCOUNT`(모의계좌 10자리)
 3. `sudo systemctl restart phil` → 화면 설정 탭 → **한투 모의투자 계좌 → 연동 켜기**
 
+## 4-1. 휴대폰 알림 (텔레그램, 선택)
+
+1. 텔레그램 앱에서 `@BotFather` 검색 → `/newbot` → 봇 이름 입력 → **토큰**(숫자:영문 긴 문자열) 복사
+2. `sudo -u phil nano /home/phil/phil/.env` → `PHIL_TELEGRAM_BOT_TOKEN=` 뒤에 붙여넣기 → 저장
+3. `sudo systemctl restart phil`
+4. 텔레그램에서 방금 만든 봇에게 아무 메시지나 보내기 → Phil 화면 설정 탭 → **채팅 연결** → **테스트**
+
 ## 5. 관리 명령
 
 | 하고 싶은 것 | 명령 |

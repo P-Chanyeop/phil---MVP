@@ -10,9 +10,9 @@ import threading
 import time
 import traceback
 
-from . import kis, ledger, naver
-from .config import (KIS_LEDGER, WATCH_EVENTS, append_jsonl, iso, load_config, load_jsonl,
-                     now_kst, operator_state)
+from . import kis, ledger, naver, notify
+from .config import (INTRADAY, KIS_LEDGER, WATCH_EVENTS, append_jsonl, iso, load_config,
+                     load_jsonl, now_kst, operator_state)
 from .market import kst_date
 
 STATUS = {"last_tick": None, "last_error": None, "watching": 0}
@@ -56,11 +56,13 @@ def check_positions(now):
     hhmm = now.strftime("%H:%M")
     opens = [e for e in ledger.read_ledger() if e["status"] == "open"]
     STATUS["watching"] = len(opens)
+    prices = {}
     for e in opens:
         try:
             price = naver.quote(e["code"])["price"]
         except naver.DataError:
             continue
+        prices[e["code"]] = price
         reason = None
         if price <= e["stop_price"]:
             reason = "손절 (실시간)"
@@ -73,6 +75,17 @@ def check_positions(now):
             if c:
                 event("close", f"{c['name']} {reason} {c['ret_pct']:+.2f}% ({c['pnl_krw']:+,}원)",
                       position_id=c["id"])
+    return prices
+
+
+def snapshot_equity(now, prices):
+    """장중 1분마다 평가자산을 기록 (홈 화면의 오늘 그래프용)."""
+    try:
+        kospi = naver.index_quote("KOSPI")["price"]
+    except naver.DataError:
+        kospi = None
+    append_jsonl(INTRADAY, {"date": now.date().isoformat(), "t": now.strftime("%H:%M"),
+                            "equity": ledger.equity(prices=prices), "kospi": kospi})
 
 
 def kis_rows():
@@ -126,11 +139,16 @@ def sync_kis(now):
 def tick():
     now = now_kst()
     STATUS["last_tick"] = iso()
-    if not _market_open(now):
+    if _market_open(now):
+        prices = check_positions(now)
+        snapshot_equity(now, prices)
+        sync_kis(now)
+    else:
         STATUS["watching"] = sum(1 for e in ledger.read_ledger() if e["status"] == "open")
-        return
-    check_positions(now)
-    sync_kis(now)
+    try:  # 장 밖에서도 (마감 후 정산·청산 알림)
+        notify.scan_and_notify()
+    except Exception as e:  # noqa: BLE001
+        STATUS["notify_error"] = str(e)[:200]
 
 
 class Watcher:
