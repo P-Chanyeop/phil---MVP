@@ -15,6 +15,15 @@
   python tools.py buy --code 005930 --horizon 3 --est-prob 0.62 --stop 0.04 [--target 0.06] \\
         [--amount 500000] --edge-class earnings --rationale "출처와 숫자가 든 한 줄"
   python tools.py sell --id <포지션id> --reason "이유"
+
+  ── 연구 (규칙) ──
+  python tools.py features                     # 규칙에 쓸 수 있는 지표 목록
+  python tools.py backtest --spec '{"conditions":[["ret_1d","<",-5],["vol_ratio",">",2]],"horizon":3,"stop":0.05,"target":0.06}'
+  python tools.py rule propose --name "이름" --spec '<위와 같은 JSON>' --why "가설 한 줄"
+  python tools.py rule list
+  python tools.py rule retire --id <규칙id> --why "이유"
+  python tools.py audit                        # 주간 감사 자료 (전략 버전별 성적, 수정 내역)
+  python tools.py disclosures [--code 005930]  # 최근 주요 공시 (DART)
 """
 import argparse
 import json
@@ -23,7 +32,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from phil import forecast, ledger, market, naver, policy, score  # noqa: E402
+from phil import audit, dart, forecast, ledger, market, naver, policy, research, rules, score  # noqa: E402
 from phil.config import FORECASTS, LEDGER, load_config, load_jsonl  # noqa: E402
 
 
@@ -38,7 +47,7 @@ def fail(msg):
 
 def main():
     cfg = load_config()
-    classes = cfg["policy"]["edge_classes"]
+    classes = [c for c in cfg["policy"]["edge_classes"] if c != "rule"]
     ap = argparse.ArgumentParser(prog="tools.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for c in ("market", "status", "score", "policy"):
@@ -70,6 +79,18 @@ def main():
     b.add_argument("--amount", type=float, help="매수 금액(원). 생략 시 한도까지")
     b.add_argument("--edge-class", required=True, choices=classes)
     b.add_argument("--rationale", required=True)
+    sub.add_parser("features")
+    sub.add_parser("audit")
+    bt = sub.add_parser("backtest")
+    bt.add_argument("--spec", required=True)
+    rl = sub.add_parser("rule")
+    rl.add_argument("action", choices=["propose", "list", "retire"])
+    rl.add_argument("--name")
+    rl.add_argument("--spec")
+    rl.add_argument("--why", default="")
+    rl.add_argument("--id")
+    ds = sub.add_parser("disclosures")
+    ds.add_argument("--code")
     se = sub.add_parser("sell")
     se.add_argument("--id", required=True)
     se.add_argument("--reason", required=True)
@@ -115,6 +136,36 @@ def main():
         elif a.cmd == "sell":
             e = ledger.sell(a.id, a.reason)
             out({"sold": e["id"], "name": e["name"], "ret_pct": e["ret_pct"], "pnl_krw": e["pnl_krw"]})
+        elif a.cmd == "features":
+            out({"features": research.FEATURES, "operators": list(research.OPS),
+                 "spec_fields": {"conditions": "[[지표, 연산자, 값], ...] 1~6개 (모두 만족)",
+                                 "horizon": "보유 거래일 1~5", "stop": "손절폭 0.02~0.10",
+                                 "target": "목표 수익률 또는 null", "max_per_day": "하루 최대 신호 1~5 (기본 3)",
+                                 "rank_by": "신호가 많을 때 고르는 기준 지표 (큰 순, 앞에 - 면 작은 순)"},
+                 "entry": "신호일 종가 매수 (실전은 15:05 현재가), 비용 포함"})
+        elif a.cmd == "backtest":
+            r = research.backtest(a.spec)
+            out(r)
+        elif a.cmd == "rule":
+            if a.action == "list":
+                out(rules.summary())
+            elif a.action == "propose":
+                if not (a.name and a.spec and len(a.why.strip()) >= 10):
+                    fail("--name, --spec, --why(10자 이상) 가 필요")
+                r = rules.propose(a.name, a.spec, a.why)
+                out({"id": r["id"], "status": r["status"], "history": r["history"][-1],
+                     "test": r["backtest"]["test"], "baseline_test": r["backtest"]["baseline_test"]})
+            else:
+                if not (a.id and len(a.why.strip()) >= 5):
+                    fail("--id 와 --why 가 필요")
+                r = rules.retire(a.id, a.why)
+                out({"retired": r["id"], "name": r["name"]})
+        elif a.cmd == "audit":
+            out(audit.report())
+        elif a.cmd == "disclosures":
+            out(dart.recent(a.code))
+    except (research.SpecError, rules.RuleError) as err:
+        fail(err)
     except (ledger.Rejected, forecast.Rejected) as err:
         fail(err)
     except naver.DataError as err:

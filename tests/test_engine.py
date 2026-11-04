@@ -7,7 +7,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from phil import config, forecast, guard, kis, ledger, market, notify, policy, resolve, score, watch  # noqa: E402
+from phil import (config, dart, forecast, guard, kis, ledger, market, notify, policy, research,  # noqa: E402
+                  resolve, rules, safety, score, watch)
 
 KST = config.KST
 OPEN_TIME = dt.datetime(2026, 10, 14, 10, 0, tzinfo=KST)  # 수요일 장중
@@ -33,7 +34,9 @@ class Tmp(unittest.TestCase):
                              (resolve, "FORECASTS", "f.jsonl"), (score, "META", "m.json"),
                              (watch, "KIS_LEDGER", "k.jsonl"), (watch, "WATCH_EVENTS", "w.jsonl"),
                              (config, "LOCK_FILE", ".lock"), (notify, "LEDGER", "l.jsonl"),
-                             (notify, "FORECASTS", "f.jsonl"), (notify, "NOTIFY_STATE", "n.json")]:
+                             (notify, "FORECASTS", "f.jsonl"), (notify, "NOTIFY_STATE", "n.json"),
+                             (rules, "RULES", "rules.json"), (rules, "RULE_SIGNALS", "sig.jsonl"),
+                             (safety, "META", "m.json"), (dart, "DISCLOSURES", "d.jsonl")]:
             mock.patch.object(mod, name, self.d / f).start()
         mock.patch("phil.market.universe", lambda refresh=False: {
             "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
@@ -280,6 +283,104 @@ class TestNotify(Tmp):
         with mock.patch("phil.notify.send", lambda t: sent.append(t)):
             notify.scan_and_notify()
         self.assertEqual(len(sent), 1)
+
+
+COSTS = {"commission": 0.00015, "sell_tax": 0.002, "slippage": 0.0005}
+SPEC = {"conditions": [["ret_1d", ">", 3]], "horizon": 2, "stop": 0.05, "target": 0.04, "max_per_day": 3,
+        "rank_by": None}
+
+
+class TestResearch(unittest.TestCase):
+    def test_simulate_paths(self):
+        b = bars("2026-01-01", [100, 100, 100], [(100, 100, 100), (100, 105, 99), (100, 100, 100)])
+        r, why, held, up = research.simulate(b, 0, SPEC, COSTS)
+        self.assertEqual((why, held), ("target", 1))
+        self.assertAlmostEqual(r, (104 * 0.9995 * (1 - 0.00215) / (100 * 1.0005 * 1.00015) - 1) * 100, places=4)
+        b = bars("2026-01-01", [100, 90, 90], [(100, 100, 100), (93, 94, 89), (90, 90, 90)])
+        self.assertEqual(research.simulate(b, 0, SPEC, COSTS)[1], "stop_gap")
+        self.assertIsNone(research.simulate(b[:2], 0, SPEC, COSTS))   # 아직 만기 안 됨
+
+    def test_validate_spec(self):
+        for bad in ({"conditions": [["x", ">", 1]], "horizon": 2, "stop": 0.05},
+                    {"conditions": [["ret_1d", "==", 1]], "horizon": 2, "stop": 0.05},
+                    {"conditions": [["ret_1d", ">", 1]], "horizon": 9, "stop": 0.05},
+                    {"conditions": [["ret_1d", ">", 1]], "horizon": 2, "stop": 0.5}, "not json"):
+            with self.assertRaises(research.SpecError):
+                research.validate_spec(bad)
+
+    def test_features_no_lookahead(self):
+        b = bars("2025-01-01", [100 + i for i in range(80)])
+        f1 = research.features(b, {}, False)
+        f2 = research.features(b[:70], {}, False)
+        self.assertEqual(f1[69], f2[69])   # 미래 봉을 붙여도 과거 지표는 그대로
+
+
+class TestRules(Tmp):
+    def fake_bt(self, ok):
+        return {"period": {}, "train": {"n": 50, "avg_net_pct": 0.5}, "baseline_test": {"n": 100},
+                "test": {"n": 40, "avg_net_pct": 0.6 if ok else -0.4, "up_rate": 0.6},
+                "verdict": {"pass": ok, "reasons": [] if ok else ["검증 손실"]}}
+
+    def test_lifecycle(self):
+        with mock.patch("phil.research.backtest", lambda spec: self.fake_bt(False)):
+            r = rules.propose("나쁜 규칙", SPEC, "백테스트에서 떨어질 가설")
+        self.assertEqual(r["status"], "rejected")
+        with mock.patch("phil.research.backtest", lambda spec: self.fake_bt(True)):
+            r = rules.propose("좋은 규칙", SPEC, "급등 다음 날 추세 지속 가설")
+        self.assertEqual(r["status"], "shadow")
+        # 그림자 신호 15건이 모두 +1% 로 끝났다고 가정 → 실전 승격
+        sigs = [{"id": str(i), "rule_id": r["id"], "rule": "x", "date": "2026-01-01", "code": "005930",
+                 "name": "삼성전자", "price": 100, "mode": "shadow", "status": "done", "ret": 1.0, "up": True}
+                for i in range(15)]
+        config.dump_jsonl(self.d / "sig.jsonl", sigs)
+        with mock.patch("phil.research.load_all", lambda: ({}, {})):
+            ev = rules.evaluate()
+        self.assertEqual(rules.get(r["id"])["status"], "live")
+        self.assertTrue(any("실전 승격" in e for e in ev))
+        # 최근 20건 평균이 음수가 되면 은퇴
+        sigs += [dict(sigs[0], id=f"n{i}", ret=-2.0) for i in range(20)]
+        config.dump_jsonl(self.d / "sig.jsonl", sigs)
+        with mock.patch("phil.research.load_all", lambda: ({}, {})):
+            rules.evaluate()
+        self.assertEqual(rules.get(r["id"])["status"], "retired")
+
+    def test_agent_cannot_use_rule_class(self):
+        with self.assertRaises(ledger.Rejected):
+            ledger.buy("005930", 0.7, 2, 0.04, None, "rule", "엔진 전용 클래스를 쓰려는 시도")
+
+    def test_rule_buy_sizing(self):
+        rule = {"id": "r1", "name": "테스트", "spec": research.validate_spec(SPEC),
+                "backtest": {"test": {"n": 40, "avg_net_pct": 0.6, "up_rate": 0.6}}}
+        e = ledger.rule_buy(rule, "005930", "삼성전자", 100.0, bars("2025-01-01", [100, 101] * 100))
+        self.assertEqual((e["edge_class"], e["rule_id"], e["horizon_days"]), ("rule", "r1", 2))
+        self.assertLessEqual(e["cost_krw"], 300_000)   # 자산의 3%
+
+
+class TestSafety(Tmp):
+    def test_drawdown_pause_and_resume(self):
+        now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)   # 월요일
+        self.assertIsNone(safety.check(10_000_000, now))
+        self.assertIsNone(safety.check(9_600_000, now))      # -4%
+        msg = safety.check(9_480_000, now)                   # -5.2%
+        self.assertIn("중단", msg)
+        self.assertTrue(safety.paused(now)[0])
+        self.assertFalse(safety.paused(dt.datetime(2026, 11, 5, 10, 0, tzinfo=KST))[0])   # 2거래일 뒤 풀림
+        with mock.patch("phil.safety.now_kst", lambda: now), self.assertRaises(ledger.Rejected):
+            ledger.buy("005930", 0.7, 2, 0.04, None, "earnings", "안전장치 중 매수 시도 테스트")
+        safety.resume()
+        self.assertFalse(safety.paused(now)[0])
+
+
+class TestDart(Tmp):
+    def test_filter_universe_and_keywords(self):
+        items = [{"stock_code": "005930", "report_nm": "단일판매ㆍ공급계약체결", "rcept_no": "1", "flr_nm": "삼성전자"},
+                 {"stock_code": "005930", "report_nm": "임원ㆍ주요주주특정증권등소유상황보고서", "rcept_no": "2"},
+                 {"stock_code": "999999", "report_nm": "단일판매ㆍ공급계약체결", "rcept_no": "3"}]
+        with mock.patch("phil.dart.fetch_today", lambda now=None: items):
+            new = dart.poll()
+            again = dart.poll()
+        self.assertEqual([r["rcept_no"] for r in new], ["1"])
+        self.assertEqual(again, [])
 
 
 class TestGuard(unittest.TestCase):

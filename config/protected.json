@@ -36,7 +36,8 @@
       "mean-reversion",
       "event",
       "macro",
-      "other"
+      "other",
+      "rule"
     ],
     "auto_ban": {
       "min_n": 30,
@@ -55,5 +56,55 @@
     "timeout_minutes": 40,
     "post_close_time": "15:45",
     "_comment": "model: claude-sonnet-5-5(기본, 장중 1회 약 $0.6) / claude-opus-5-5(약 $1.2) / 빈 문자열이면 Claude Code 기본값."
+  },
+  "rules": {
+    "_comment": "규칙 수명주기: 제안 → 백테스트 통과(그림자) → 실전 신호 검증 통과(실전) → 성적 나빠지면 은퇴. 승격은 엔진만 한다.",
+    "promote_from_backtest": {
+      "min_test_trades": 30,
+      "min_test_avg_net_pct": 0.2,
+      "min_test_profit_factor": 1.2
+    },
+    "promote_from_shadow": {
+      "min_signals": 15,
+      "min_avg_net_pct": 0.1
+    },
+    "live": {
+      "position_pct": 0.03,
+      "max_open_per_rule": 3,
+      "max_live_rules": 5
+    },
+    "retire": {
+      "window": 20,
+      "min_avg_net_pct": 0.0
+    },
+    "signal_time": "15:05",
+    "max_rules": 20
+  },
+  "safety": {
+    "_comment": "자산이 최근 고점 대비 max_drawdown_pct 이상 빠지면 pause_days 거래일 동안 신규 매수 중단.",
+    "max_drawdown_pct": 5.0,
+    "pause_days": 2
+  },
+  "dart": {
+    "_comment": ".env 의 PHIL_DART_API_KEY 가 있을 때만. 주요 공시가 뜨면 사이클을 앞당겨 깨운다.",
+    "poll_minutes": 3,
+    "min_gap_minutes": 30,
+    "max_event_cycles_per_day": 4,
+    "keywords": [
+      "단일판매",
+      "공급계약",
+      "자기주식",
+      "잠정",
+      "실적",
+      "유상증자",
+      "무상증자",
+      "최대주주",
+      "배당",
+      "합병",
+      "분할",
+      "수주",
+      "특허",
+      "임상"
+    ]
   }
 }

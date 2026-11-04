@@ -10,7 +10,7 @@ import threading
 import time
 import traceback
 
-from . import kis, ledger, naver, notify
+from . import dart, kis, ledger, naver, notify, research, rules, safety
 from .config import (INTRADAY, KIS_LEDGER, WATCH_EVENTS, append_jsonl, iso, load_config,
                      load_jsonl, now_kst, operator_state)
 from .market import kst_date
@@ -84,8 +84,79 @@ def snapshot_equity(now, prices):
         kospi = naver.index_quote("KOSPI")["price"]
     except naver.DataError:
         kospi = None
+    eq = ledger.equity(prices=prices)
     append_jsonl(INTRADAY, {"date": now.date().isoformat(), "t": now.strftime("%H:%M"),
-                            "equity": ledger.equity(prices=prices), "kospi": kospi})
+                            "equity": eq, "kospi": kospi})
+    msg = safety.check(eq, now)
+    if msg:
+        event("safety", msg)
+        _say(msg)
+
+
+def _say(msg):
+    try:
+        if notify.configured():
+            notify.send(msg)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+class Jobs:
+    """하루 한 번짜리 작업과 공시 감시 (각자 별도 스레드, 감시 루프를 막지 않음)."""
+    done = {}
+    running = set()
+    last_dart = 0.0
+    on_event_cycle = None   # 서버가 사이클 실행 함수를 넣어 준다
+
+    @classmethod
+    def once(cls, name, day, fn):
+        if cls.done.get(name) == day or name in cls.running:
+            return
+        cls.done[name] = day
+        cls.running.add(name)
+
+        def run():
+            try:
+                for m in fn() or []:
+                    event("rule" if "규칙" in str(m) else "job", str(m))
+                    _say(str(m))
+            except Exception as e:  # noqa: BLE001
+                event("job_error", f"{name}: {e}")
+            finally:
+                cls.running.discard(name)
+        threading.Thread(target=run, daemon=True).start()
+
+
+def _prefetch_and_evaluate():
+    research.prefetch()
+    return rules.evaluate()
+
+
+def scheduled(now):
+    """매일·매주 정해진 일 (장 시간과 무관하게 tick 마다 확인)."""
+    day = now.date().isoformat()
+    hhmm = now.strftime("%H:%M")
+    weekday = now.weekday() < 5
+    cfg = load_config()
+    if weekday and cfg["rules"]["signal_time"] <= hhmm <= "15:18" and _market_open(now):
+        Jobs.once("rule_signals", day, rules.run_signals)
+    if weekday and hhmm >= "16:10":
+        Jobs.once("post_close", day, _prefetch_and_evaluate)
+    if not research._cache_path("KOSPI").exists():
+        Jobs.once("first_prefetch", day, lambda: [f"과거 데이터 준비: {research.prefetch()['ok']}종목"])
+    # 공시 감시
+    if dart.key() and weekday and "07:30" <= hhmm <= "15:20" and \
+            time.time() - Jobs.last_dart >= cfg["dart"]["poll_minutes"] * 60:
+        Jobs.last_dart = time.time()
+        try:
+            new = dart.poll(now)
+        except dart.DartError as e:
+            dart.STATUS["error"] = str(e)
+            new = []
+        for r in new:
+            event("dart", f"📢 공시 · {r['name']} — {r['title']}")
+        if new and Jobs.on_event_cycle and _market_open(now):
+            Jobs.on_event_cycle(new)
 
 
 def kis_rows():
@@ -139,6 +210,10 @@ def sync_kis(now):
 def tick():
     now = now_kst()
     STATUS["last_tick"] = iso()
+    try:
+        scheduled(now)
+    except Exception as e:  # noqa: BLE001
+        STATUS["last_error"] = f"scheduled: {e}"
     if _market_open(now):
         prices = check_positions(now)
         snapshot_equity(now, prices)

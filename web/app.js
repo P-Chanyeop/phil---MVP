@@ -77,6 +77,8 @@ async function loadHome() {
   $("#btnRun").textContent = run ? "실행 중…" : mk.can_trade_now ? "▶ 사이클 실행" : "▶ 정산·회고 실행";
   $("#btnStop").classList.toggle("hidden", !run);
   $("#claudeWarn").classList.toggle("hidden", S.claude_available);
+  $("#pauseWarn").classList.toggle("hidden", !S.buy_pause);
+  if (S.buy_pause) $("#pauseText").textContent = "⛔ 안전장치: " + S.buy_pause;
   const authBad = S.last_cycle && S.last_cycle.error_kind === "auth";
   $("#authWarn").classList.toggle("hidden", !authBad);
   if (authBad) $("#authWarn").textContent = "🔑 " + S.last_cycle.error;
@@ -181,6 +183,16 @@ async function loadJournal() {
   $("#catTable").innerHTML = keys.map((k) => { const c = byCal[k], b = banned[k];
     return `<div class="item"><div class="q">${esc(k)} ${b ? '<span class="chip bad">매수 금지</span>' : c && c.n >= 10 && c.brier_delta < 0 ? '<span class="chip good">기저율보다 정확</span>' : ""}</div>
     <div class="meta">${c ? `<span>${c.n}건</span><span class="${c.brier_delta < 0 ? "pos" : "neg"}">Δ ${c.brier_delta}</span><span>적중 ${pct(c.hit_rate)}</span>` : ""}${b ? `<span>${esc(b)}</span>` : ""}</div></div>`; }).join("") || `<div class="empty">장중에 사이클을 돌리면 예측이 쌓여요.</div>`;
+  try {
+    const rr = await api("/api/rules");
+    const label = {shadow: ["그림자 검증 중", ""], live: ["실전", "good"], retired: ["은퇴", "gray"], rejected: ["백테스트 탈락", "bad"]};
+    $("#ruleList").innerHTML = rr.rules.map((r) => { const [t, c] = label[r.status] || [r.status, ""]; const bt = r.backtest_test || {}, fw = r.forward || {}, lt = r.live_trades || {};
+      return `<div class="item"><div class="q">${esc(r.name)} <span class="chip ${c}">${t}</span></div>
+        <div class="sub">${esc(r.why)}</div>
+        <div class="meta"><span>조건: ${r.spec.conditions.map((x) => esc(x.join(" "))).join(" · ")} → ${r.spec.horizon}일, 손절 ${Math.round(r.spec.stop * 100)}%</span></div>
+        <div class="meta"><span>백테스트(검증) ${bt.n ?? 0}건 평균 ${bt.avg_net_pct ?? "—"}%</span><span>그림자 ${fw.n ?? 0}건 ${fw.avg_net_pct != null ? "평균 " + fw.avg_net_pct + "%" : ""}</span>${lt.n ? `<span class="${ud(lt.pnl_krw)}">실전 ${lt.n}건 ${won(lt.pnl_krw, 1)}</span>` : ""}</div>
+        ${r.status === "rejected" ? `<div class="meta"><span class="neg">${esc(((r.backtest_verdict || {}).reasons || []).join(" / "))}</span></div>` : ""}</div>`; }).join("") || `<div class="empty">아직 규칙이 없어요. Phil 이 연구 단계에서 가설을 백테스트하면 여기에 쌓여요.</div>`;
+  } catch (e) { $("#ruleList").innerHTML = `<div class="empty">규칙을 불러오지 못했어요: ${esc(e.message)}</div>`; }
   const cls = sc.by_edge_class || {}, v = sc.verified_edge_classes || [];
   $("#classTable").innerHTML = Object.entries(cls).map(([k, s]) => `<div class="item"><div class="q">${esc(k)} ${v.includes(k) ? '<span class="chip good">검증된 엣지</span>' : ""}</div>
     <div class="meta"><span>${s.n}건</span><span>승률 ${pct(s.win_rate)}</span><span class="${ud(s.pnl_krw)}">${won(s.pnl_krw, 1)}</span><span>평균 ${sp(s.avg_ret_pct)}</span></div></div>`).join("") || `<div class="empty">청산된 매매가 쌓이면 여기 나타나요.</div>`;
@@ -209,6 +221,10 @@ $("#btnTgTest").onclick = async () => { try { await api("/api/notify/test", {});
 
 async function loadSettings() {
   loadNotify();
+  const d = S?.dart || {};
+  $("#dartInfo").innerHTML = d.key_set
+    ? `<b>켜짐</b> · 장중 3분마다 300종목의 주요 공시(수주·자사주·실적·증자 등)를 확인하고, 뜨면 사이클을 바로 깨워요 (자동 반복이 켜져 있을 때, 하루 최대 4번).<br>마지막 확인 ${ago(d.last_poll) || "—"}${d.error ? ` · <span class="neg">${esc(d.error)}</span>` : ""}`
+    : `꺼짐. <a href="https://opendart.fss.or.kr" target="_blank" rel="noopener">DART 오픈API</a> 에서 무료 인증키를 받아 <code>.env</code> 의 <code>PHIL_DART_API_KEY=</code> 에 넣고 재시작하세요.`;
   $("#policyRules").textContent = "엔진 규칙: " + (S?.policy || []).join(" · ");
   $("#aiInfo").innerHTML = `<b>모델</b>${esc(S?.model)}<br><b>로그인 방식</b>${S?.auth === "api_key" ? "API 키 (.env 의 ANTHROPIC_API_KEY, 사용한 만큼 결제)" : "Claude 구독 로그인 (만료되면 터미널에서 claude → /login)"}`;
   try {
@@ -302,3 +318,5 @@ $("#btnKis").onclick = async () => {
   if (!on && !confirm("한투 모의투자 계좌 연동을 켤까요?\n지금부터 Phil 이 새로 사는 종목을 모의계좌에도 같은 수량으로 시장가 주문해요 (실제 돈 아님).")) return;
   try { await api("/api/operator", {kis_enabled: !on}); toast(on ? "연동을 껐어요" : "연동을 켰어요"); await refresh(); loadSettings(); } catch (e) { toast(e.message); }
 };
+
+$("#btnResume").onclick = async () => { if (!confirm("안전장치를 해제하고 신규 매수를 다시 허용할까요?")) return; await api("/api/operator", {resume_buys: true}); toast("신규 매수를 다시 허용했어요"); refresh(); };

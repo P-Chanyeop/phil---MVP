@@ -9,3 +9,4 @@ journal/*.jsonl
 journal/*.json
 journal/cycle-logs/
 journal/retros/*.md
+journal/bars/

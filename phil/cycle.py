@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from . import guard, ledger, market, naver, resolve, score
+from . import audit, guard, ledger, market, naver, resolve, rules, safety, score
 from .config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, ROOT, STRATEGY,
                      STRATEGY_HISTORY, append_jsonl, iso, load_config, load_env, load_jsonl,
                      now_kst, now_utc, operator_state)
@@ -60,7 +60,7 @@ def _diff(before, after):
     return diffs
 
 
-def build_prompt(cycle_id, settled, mode, why_mode):
+def build_prompt(cycle_id, settled, mode, why_mode, events=None):
     py = python_cmd()
     stamp = now_kst().strftime("%Y%m%d-%H%M")
     body = (ROOT / "agent" / "CYCLE.md").read_text(encoding="utf-8")
@@ -83,7 +83,14 @@ def build_prompt(cycle_id, settled, mode, why_mode):
         "open_positions": st["open_positions"],
         "trades": sc["trades"], "calibration": sc["calibration"],
         "banned_edge_classes": sc["banned_edge_classes"],
+        "buy_pause": safety.paused()[1] or None,
+        "rules": [{k: r[k] for k in ("id", "name", "status", "forward", "live_trades")} for r in rules.summary()
+                  if r["status"] in ("shadow", "live")],
     }
+    if events:
+        ctx["event_disclosures"] = events
+    if mode == "AUDIT":
+        ctx["audit"] = audit.report()
     return body + "\n\n## 이번 사이클 컨텍스트\n\n```json\n" + \
         json.dumps(ctx, ensure_ascii=False, indent=1) + "\n```\n"
 
@@ -133,7 +140,7 @@ def _summarize_event(ev):
     return None
 
 
-def run_cycle(force_agent=False):
+def run_cycle(force_agent=False, mode_override=None, events=None):
     if not _lock.acquire(blocking=False):
         return {"ok": False, "error": "이미 사이클이 실행 중입니다"}
     cycle_id = now_utc().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
@@ -167,7 +174,11 @@ def run_cycle(force_agent=False):
 
         is_open, why = market.trading_window()
         has_new = bool(settled["closed"] or settled["forecasts_settled"] or settled["calib_settled"])
-        if is_open:
+        if mode_override == "AUDIT":
+            mode = "AUDIT"
+        elif mode_override == "EVENT" and is_open:
+            mode = "EVENT"
+        elif is_open:
             mode = "FULL"
         elif has_new or force_agent:
             mode = "RETRO"
@@ -183,7 +194,9 @@ def run_cycle(force_agent=False):
             result.update(ok=False, error="claude CLI 없음")
             return result
 
-        log(f"🐹 에이전트 시작 — {'장중: 회고·조사·예측·매매' if mode == 'FULL' else f'{why}: 회고·전략 수정만'}")
+        label = {"FULL": "장중: 회고·연구·조사·예측·매매", "EVENT": "📢 공시 반응: 해당 종목 조사·매매",
+                 "AUDIT": "🧾 주간 감사: 전략 수정 검토·규칙 정리", "RETRO": f"{why}: 회고·전략 수정만"}[mode]
+        log(f"🐹 에이전트 시작 — {label}")
         CURRENT["phase"] = "에이전트 실행"
         snap = guard.snapshot()
         strat_before = _strategy_snapshot()
@@ -199,7 +212,7 @@ def run_cycle(force_agent=False):
         timeout = load_config()["cycle"].get("timeout_minutes", 40) * 60
         summary_line = None
         auth_failed = False
-        proc = subprocess.Popen(agent_cmd(build_prompt(cycle_id, settled, mode, why)), cwd=ROOT,
+        proc = subprocess.Popen(agent_cmd(build_prompt(cycle_id, settled, mode, why, events)), cwd=ROOT,
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
         CURRENT["pid"] = proc.pid
@@ -283,6 +296,8 @@ class AutoLoop:
     def __init__(self):
         self.next_run = None
         self.post_close_done = None
+        self.audit_week = None
+        self.event_starts = []
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self):
@@ -315,3 +330,27 @@ class AutoLoop:
         if weekday and hhmm >= post and self.post_close_done != today:
             self.post_close_done = today
             threading.Thread(target=run_cycle, daemon=True).start()
+            return
+        week = now.strftime("%G-W%V")   # 토요일 10시 이후 주 1회 감사
+        if now.weekday() == 5 and hhmm >= "10:00" and self.audit_week != week:
+            self.audit_week = week
+            threading.Thread(target=run_cycle, kwargs={"mode_override": "AUDIT"}, daemon=True).start()
+
+    def event_cycle(self, disclosures):
+        """공시가 뜨면 사이클을 앞당김. 자동 반복이 켜져 있을 때만, 간격·하루 횟수 제한."""
+        st = operator_state()
+        cfg = load_config()["dart"]
+        if not st.get("auto_loop") or CURRENT["running"]:
+            return
+        now = time.time()
+        today = now_kst().date().isoformat()
+        self.event_starts = [(d, t) for d, t in self.event_starts if d == today]
+        if len(self.event_starts) >= cfg["max_event_cycles_per_day"]:
+            return
+        last = max([t for _, t in self.event_starts] + [0])
+        if now - last < cfg["min_gap_minutes"] * 60:
+            return
+        self.event_starts.append((today, now))
+        self.next_run = now + max(15, int(st.get("loop_minutes", 60))) * 60  # 정규 사이클은 뒤로 미룸
+        threading.Thread(target=run_cycle, kwargs={"mode_override": "EVENT", "events": disclosures},
+                         daemon=True).start()

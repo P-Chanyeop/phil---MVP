@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import time
 
-from phil import cycle, kis, ledger, market, naver, notify, policy, resolve, score, watch
+from phil import cycle, dart, kis, ledger, market, naver, notify, policy, resolve, rules, safety, score, watch
 from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, INTRADAY, LEDGER, RETROS, ROOT, STRATEGY, WATCH_EVENTS,
                          STRATEGY_HISTORY, load_config, load_env, load_jsonl,
                          operator_state, save_operator_state)
@@ -130,9 +130,11 @@ def feed(limit=40):
             items.append({"ts": r["settled_ts"], "icon": "✅" if hit else "❌",
                           "text": f"예측 결과 · {r['name']} {'올랐어요' if r['status'] == 'up' else '내렸어요'} — {'맞힘' if hit else '빗나감'}",
                           "sub": ""})
-    for w in load_jsonl(WATCH_EVENTS)[-100:]:
-        if w.get("kind") in ("kis", "kis_error"):
-            items.append({"ts": w["ts"], "icon": "🏦" if w["kind"] == "kis" else "⚠️", "text": w["msg"], "sub": ""})
+    icons = {"kis": "🏦", "kis_error": "⚠️", "dart": "📢", "rule": "🤖", "safety": "⛔", "job": "🗂️",
+             "job_error": "⚠️"}
+    for w in load_jsonl(WATCH_EVENTS)[-150:]:
+        if w.get("kind") in icons:
+            items.append({"ts": w["ts"], "icon": icons[w["kind"]], "text": w["msg"], "sub": ""})
     for c in load_jsonl(CYCLES_LOG)[-60:]:
         if c.get("mode"):
             items.append({"ts": c.get("finished"), "icon": "🔁" if c.get("ok") else "⚠️",
@@ -170,6 +172,9 @@ def state():
         "next_auto_run": AUTO.next_run if AUTO else None,
         "policy": policy.summary()["rules"],
         "watch": dict(watch.STATUS),
+        "buy_pause": safety.paused()[1] or None,
+        "dart": {"key_set": bool(dart.key()), **dart.STATUS},
+        "rules_active": sum(1 for r in rules.all_rules() if r["status"] in ("shadow", "live")),
         "kis": {"configured": kis.configured(), "enabled": operator_state().get("kis_enabled", False)},
         "auth": "api_key" if (load_env().get("ANTHROPIC_API_KEY") or __import__("os").environ.get("ANTHROPIC_API_KEY")) else "login",
         "model": load_config()["cycle"].get("model") or "Claude Code 기본값",
@@ -258,6 +263,10 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/scan":
                 return self._send(200, market.scan(q("sort", "value"), q("query") or None,
                                                    int(q("limit", 40)), q("market") or None))
+            if p == "/api/rules":
+                from phil.config import RULE_SIGNALS
+                return self._send(200, {"rules": rules.summary()[::-1],
+                                        "signals": load_jsonl(RULE_SIGNALS)[::-1][:40]})
             if p == "/api/live":
                 return self._send(200, live())
             if p == "/api/feed":
@@ -334,6 +343,8 @@ class H(BaseHTTPRequestHandler):
                 st = operator_state()
                 if "auto_loop" in body:
                     st["auto_loop"] = bool(body["auto_loop"])
+                if body.get("resume_buys"):
+                    safety.resume()
                 if "kis_enabled" in body:
                     want = bool(body["kis_enabled"])
                     if want and not kis.configured():
@@ -364,6 +375,7 @@ def main():
     for d in (RETROS, CYCLE_LOGS):
         d.mkdir(parents=True, exist_ok=True)
     AUTO = cycle.AutoLoop()
+    watch.Jobs.on_event_cycle = AUTO.event_cycle
     watch.Watcher(60)
     srv = ThreadingHTTPServer((a.host, a.port), H)
     shown = "127.0.0.1" if a.host in ("0.0.0.0", "localhost") else a.host

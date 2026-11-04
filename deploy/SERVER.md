@@ -56,6 +56,14 @@ SSH 를 끊어도 서버에서 계속 돕니다.
 3. `sudo systemctl restart phil`
 4. 텔레그램에서 방금 만든 봇에게 아무 메시지나 보내기 → Phil 화면 설정 탭 → **채팅 연결** → **테스트**
 
+## 4-2. 공시 즉시 반응 (DART, 선택)
+
+1. [DART 오픈API](https://opendart.fss.or.kr) → 인증키 신청 (무료, 이메일 인증)
+2. `sudo -u phil nano /home/phil/phil/.env` → `PHIL_DART_API_KEY=` 뒤에 붙여넣기 → 저장
+3. `sudo systemctl restart phil` → 설정 탭 "공시 즉시 반응" 이 **켜짐** 이면 끝
+
+백테스트용 과거 데이터는 서버가 처음 켜질 때와 매일 16:10 에 자동으로 받습니다 (약 1분).
+
 ## 5. 관리 명령
 
 | 하고 싶은 것 | 명령 |

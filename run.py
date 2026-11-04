@@ -6,6 +6,7 @@
   python run.py loop 10 60      # 10회, 60분 간격
   python run.py settle          # 정산만
   python run.py score           # 성적 리포트
+  python run.py prefetch        # 백테스트용 과거 일봉 받기 (약 1분)
 """
 import json
 import sys
@@ -33,6 +34,9 @@ def main():
             print(json.dumps(cycle.run_cycle(), ensure_ascii=False, indent=1))
             if i < n - 1:
                 time.sleep(gap * 60)
+    elif cmd == "prefetch":
+        from phil import research
+        print(json.dumps(research.prefetch(), ensure_ascii=False))
     elif cmd == "settle":
         print(json.dumps(resolve.settle_all(), ensure_ascii=False, indent=1))
     elif cmd == "score":

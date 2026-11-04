@@ -59,6 +59,7 @@
           </select>
         </div>
         <div id="authWarn" class="warn hidden"></div>
+        <div id="pauseWarn" class="warn hidden"><span id="pauseText"></span> <button id="btnResume" class="btn ghost" style="padding:6px 10px;margin-left:6px">지금 해제</button></div>
         <div id="claudeWarn" class="warn hidden">`claude` CLI 를 찾지 못했어요. Claude Code 를 설치하고 로그인한 뒤 서버를 다시 켜 주세요.</div>
         <pre id="liveLog" class="log hidden"></pre>
       </div>
@@ -121,6 +122,11 @@
         <div id="catTable" class="list mt"></div>
       </div>
       <div class="card">
+        <div class="title">규칙 (엔진 자동매매)</div>
+        <div class="sub">Phil 이 만든 규칙을 과거 3년으로 검증하고, 실제 시장에서 돈 없이 신호를 지켜본 뒤(그림자), 통과하면 엔진이 매일 15:05 에 직접 사요.</div>
+        <div id="ruleList" class="list mt"></div>
+      </div>
+      <div class="card">
         <div class="title">근거 유형별 매매 성적</div>
         <div id="classTable" class="list"></div>
       </div>
@@ -155,6 +161,10 @@
         <div class="title">실시간 감시</div>
         <div class="sub" id="watchSub">장중 1분마다 보유 종목의 손절·목표가·만기를 확인해요 (Claude 비용 없음).</div>
         <div id="watchList" class="list mt"></div>
+      </div>
+      <div class="card">
+        <div class="title">공시 즉시 반응 (DART)</div>
+        <div id="dartInfo" class="sub mt" style="line-height:1.7">확인 중…</div>
       </div>
       <div class="card">
         <div class="title">AI 설정</div>

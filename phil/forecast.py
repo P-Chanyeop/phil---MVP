@@ -41,7 +41,8 @@ def record(code, horizon_days, est_prob, edge_class, note="", cycle_id=None, now
            "name": q["name"], "horizon_days": horizon_days, "ref_price": q["price"],
            "ref_date": market.kst_date(iso()), "est_prob": round(est_prob, 4),
            "base_rate": market.base_rate(bars, horizon_days), "edge_class": edge_class,
-           "note": (note or "").strip()[:500], "status": "open"}
+           "note": (note or "").strip()[:500], "status": "open",
+           "strategy_rev": __import__("phil.ledger", fromlist=["strategy_rev"]).strategy_rev()}
     with ledger_lock():
         if any(r["code"] == code and r["status"] == "open" for r in load_jsonl(FORECASTS)):
             raise Rejected("이 종목에 이미 열린 예측이 있음 (종목당 하나)")

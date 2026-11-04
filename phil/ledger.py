@@ -11,7 +11,7 @@ import math
 import os
 import uuid
 
-from . import market, naver, policy
+from . import market, naver, policy, safety
 from .config import LEDGER, append_jsonl, dump_jsonl, iso, ledger_lock, load_config, load_jsonl
 
 
@@ -68,6 +68,11 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
     ok, why = market.trading_window(now)
     if not ok:
         raise Rejected(f"지금은 매수할 수 없음: {why}")
+    paused, pwhy = safety.paused()
+    if paused:
+        raise Rejected(f"안전장치: {pwhy}")
+    if edge_class == "rule":
+        raise Rejected("edge-class 'rule' 은 엔진의 규칙 매매 전용")
     if len(open_pos) >= lim["max_open_positions"]:
         raise Rejected(f"최대 보유 종목 수({lim['max_open_positions']}) 도달")
     if cycle_id != "manual" and sum(1 for e in entries if e.get("cycle_id") == cycle_id) \
@@ -132,9 +137,63 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "target_price": round(price * (1 + target_pct), 2) if target_pct else None,
         "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
         "edge_class": edge_class, "rationale": rationale.strip(), "exploration": exploration,
+        "strategy_rev": strategy_rev(),
         "status": "open", "last_price": price,
     }
+    _commit(e, lim, cfg)
+    return e
+
+
+def strategy_rev():
+    """지금 전략 파일(playbook·risk)의 짧은 해시 — 어느 버전의 전략으로 한 매매인지 추적 (주간 감사용)."""
+    import hashlib
+    from .config import STRATEGY
+    h = hashlib.sha1()
+    for name in ("playbook.md", "risk.json"):
+        f = STRATEGY / name
+        if f.exists():
+            h.update(f.read_bytes())
+    return h.hexdigest()[:8]
+
+
+def rule_buy(rule, code, name, price, bars):
+    """엔진의 규칙 자동 매수 (매일 15:05). 에이전트 판단 없이 검증된 규칙만."""
+    cfg = load_config()
+    lim, costs, rc = cfg["limits"], cfg["costs"], cfg["rules"]["live"]
+    paused, pwhy = safety.paused()
+    if paused:
+        raise Rejected(f"안전장치: {pwhy}")
+    entries = read_ledger()
+    if sum(1 for e in entries if e["status"] == "open" and e.get("rule_id") == rule["id"]) >= rc["max_open_per_rule"]:
+        raise Rejected("이 규칙의 동시 보유 한도")
+    spec = rule["spec"]
+    amount = min(equity(entries, cfg) * rc["position_pct"], cash(entries, cfg))
+    qty = math.floor(amount / (price * (1 + costs["slippage"]) * (1 + costs["commission"])))
+    if qty < 1:
+        raise Rejected("1주도 살 수 없는 금액")
+    fill, cost = buy_cost(price, qty, costs)
+    bt = rule["backtest"]["test"]
+    est = bt.get("up_rate") or 0.5
+    e = {
+        "id": uuid.uuid4().hex[:12], "ts": iso(), "cycle_id": "rule",
+        "code": code, "name": name, "market": market.universe().get(code, {}).get("market"),
+        "qty": qty, "quote_price": price, "entry_price": round(fill, 2), "cost_krw": cost,
+        "horizon_days": spec["horizon"],
+        "stop_price": round(price * (1 - spec["stop"]), 2),
+        "target_price": round(price * (1 + spec["target"]), 2) if spec["target"] else None,
+        "est_prob": round(min(max(est, 0.01), 0.99), 4),
+        "base_rate": market.base_rate(bars[-260:], spec["horizon"]),
+        "edge": None, "edge_class": "rule", "rule_id": rule["id"], "exploration": False,
+        "rationale": f"규칙 '{rule['name']}' — 백테스트 검증 {bt.get('n')}건 평균 {bt.get('avg_net_pct')}%",
+        "strategy_rev": strategy_rev(), "status": "open", "last_price": price,
+    }
+    _commit(e, lim, cfg)
+    return e
+
+
+def _commit(e, lim, cfg):
     # 네트워크 조회는 잠금 밖에서, 최종 확인과 기록은 잠금 안에서 (다른 프로세스와 경합 방지)
+    code, cost = e["code"], e["cost_krw"]
     with ledger_lock():
         entries = read_ledger()
         if any(x["code"] == code and x["status"] == "open" for x in entries):
@@ -144,7 +203,6 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         if cost > cash(entries, cfg):
             raise Rejected("모의 현금 부족")
         append_jsonl(LEDGER, e)
-    return e
 
 
 def close_position(position_id, price, reason):
