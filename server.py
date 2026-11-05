@@ -265,8 +265,11 @@ class H(BaseHTTPRequestHandler):
                                                    int(q("limit", 40)), q("market") or None))
             if p == "/api/rules":
                 from phil.config import RULE_SIGNALS
+                from phil import discover
+                rep = discover.last_report()
                 return self._send(200, {"rules": rules.summary()[::-1],
-                                        "signals": load_jsonl(RULE_SIGNALS)[::-1][:40]})
+                                        "signals": load_jsonl(RULE_SIGNALS)[::-1][:40],
+                                        "discovery": {k: rep.get(k) for k in ("ts", "tested", "passed", "added_to_shadow", "seconds")}})
             if p == "/api/live":
                 return self._send(200, live())
             if p == "/api/feed":

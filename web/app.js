@@ -185,6 +185,8 @@ async function loadJournal() {
     <div class="meta">${c ? `<span>${c.n}건</span><span class="${c.brier_delta < 0 ? "pos" : "neg"}">Δ ${c.brier_delta}</span><span>적중 ${pct(c.hit_rate)}</span>` : ""}${b ? `<span>${esc(b)}</span>` : ""}</div></div>`; }).join("") || `<div class="empty">장중에 사이클을 돌리면 예측이 쌓여요.</div>`;
   try {
     const rr = await api("/api/rules");
+    const dc = rr.discovery || {};
+    $("#discLine").innerHTML = dc.ts ? `🔬 자동 탐색 (${ago(dc.ts)}): 가설 <b>${dc.tested}</b>개 시험 → 엄격 기준 통과 <b>${dc.passed}</b>개${(dc.added_to_shadow || []).length ? ` → 그림자 추가 ${dc.added_to_shadow.length}개` : ""}` : "🔬 자동 탐색은 매일 장 마감 후(16:10~) 돌아요.";
     const label = {shadow: ["그림자 검증 중", ""], live: ["실전", "good"], retired: ["은퇴", "gray"], rejected: ["백테스트 탈락", "bad"]};
     $("#ruleList").innerHTML = rr.rules.map((r) => { const [t, c] = label[r.status] || [r.status, ""]; const bt = r.backtest_test || {}, fw = r.forward || {}, lt = r.live_trades || {};
       return `<div class="item"><div class="q">${esc(r.name)} <span class="chip ${c}">${t}</span></div>

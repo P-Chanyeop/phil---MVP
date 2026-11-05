@@ -244,31 +244,45 @@ def _stats(trades):
             "days": len({t["date"] for t in trades})}
 
 
-def backtest(spec, data=None):
-    spec = validate_spec(spec)
-    costs = load_config()["costs"]
+def prepare(data=None):
+    """지표를 한 번만 계산해 둔다 (여러 가설을 빠르게 시험하기 위해)."""
     bars_by, uni = data or load_all()
     kb = bars_by.get("KOSPI")
     if not kb or len(bars_by) < 50:
         raise SpecError("과거 데이터 캐시가 없습니다. 운영자가 `python run.py prefetch` 를 실행해야 합니다.")
     kmap = _kospi_map(kb)
     dates = [b[0] for b in kb]
-    split = dates[int(len(dates) * 2 / 3)]
-    cand = {}  # date -> [(rank, code, i)]
-    base_all = []
+    rows = []
     for code, bars in bars_by.items():
         if code == "KOSPI" or code not in uni:
             continue
-        feats = features(bars, kmap, uni[code]["market"] == "KOSDAQ")
+        rows.append((code, bars, features(bars, kmap, uni[code]["market"] == "KOSDAQ")))
+    return {"rows": rows, "uni": uni, "dates": dates, "split": dates[int(len(dates) * 2 / 3)]}
+
+
+def backtest(spec, data=None, prepared=None):
+    spec = validate_spec(spec)
+    costs = load_config()["costs"]
+    pre = prepared or prepare(data)
+    uni, dates, split = pre["uni"], pre["dates"], pre["split"]
+    bars_by = {code: bars for code, bars, _ in pre["rows"]}
+    cand = {}  # date -> [(rank, code, i)]
+    bkey = (spec["horizon"], spec["stop"], spec["target"])
+    base_cache = pre.setdefault("_base", {})
+    base_all = base_cache.get(bkey)
+    need_base = base_all is None
+    base_all = base_all if base_all is not None else []
+    for code, bars, feats in pre["rows"]:
         for i, f in enumerate(feats):
             if f is None:
                 continue
-            if i % 7 == 0:  # 기준선: 아무 날·아무 종목이나 같은 방식으로 샀을 때 (표본 추출)
+            if need_base and i % 7 == 0:  # 기준선: 아무 날·아무 종목이나 같은 방식으로 샀을 때 (표본 추출)
                 r = simulate(bars, i, spec, costs)
                 if r:
                     base_all.append({"date": f["date"], "ret": r[0], "up": r[3]})
             if matches(spec, f):
                 cand.setdefault(f["date"], []).append((rank_key(spec, f), code, i))
+    base_cache[bkey] = base_all
     trades = []
     for d, lst in cand.items():
         lst.sort()

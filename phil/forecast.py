@@ -37,10 +37,15 @@ def record(code, horizon_days, est_prob, edge_class, note="", cycle_id=None, now
         raise Rejected("유니버스 밖의 종목")
     q = naver.quote(code)
     bars = naver.daily_bars(code, 260)
+    br = market.base_rate(bars, horizon_days)
+    mv = cfg["policy"].get("min_view_vs_base_rate", 0)
+    if abs(est_prob - br) < mv:
+        raise Rejected(f"의견 없는 예측: 내 확률 {est_prob} 가 기저율 {br} 와 {mv} 미만 차이. "
+                       f"근거가 없으면 기록하지 말고 다음 후보로 넘어가라 (기저율 복사는 배울 게 없다).")
     row = {"id": uuid.uuid4().hex[:12], "ts": iso(), "cycle_id": cycle_id, "code": code,
            "name": q["name"], "horizon_days": horizon_days, "ref_price": q["price"],
            "ref_date": market.kst_date(iso()), "est_prob": round(est_prob, 4),
-           "base_rate": market.base_rate(bars, horizon_days), "edge_class": edge_class,
+           "base_rate": br, "edge_class": edge_class,
            "note": (note or "").strip()[:500], "status": "open",
            "strategy_rev": __import__("phil.ledger", fromlist=["strategy_rev"]).strategy_rev()}
     with ledger_lock():

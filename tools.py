@@ -24,6 +24,7 @@
   python tools.py rule retire --id <규칙id> --why "이유"
   python tools.py audit                        # 주간 감사 자료 (전략 버전별 성적, 수정 내역)
   python tools.py disclosures [--code 005930]  # 최근 주요 공시 (DART)
+  python tools.py discoveries                  # 엔진 자동 탐색 결과 (매일 장 마감 후)
 """
 import argparse
 import json
@@ -81,6 +82,7 @@ def main():
     b.add_argument("--rationale", required=True)
     sub.add_parser("features")
     sub.add_parser("audit")
+    sub.add_parser("discoveries")
     bt = sub.add_parser("backtest")
     bt.add_argument("--spec", required=True)
     rl = sub.add_parser("rule")
@@ -160,6 +162,9 @@ def main():
                     fail("--id 와 --why 가 필요")
                 r = rules.retire(a.id, a.why)
                 out({"retired": r["id"], "name": r["name"]})
+        elif a.cmd == "discoveries":
+            from phil import discover
+            out(discover.last_report() or {"note": "아직 자동 탐색 결과 없음 (매일 16:10 이후 실행)"})
         elif a.cmd == "audit":
             out(audit.report())
         elif a.cmd == "disclosures":

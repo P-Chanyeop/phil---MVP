@@ -28,6 +28,7 @@ AUTH_HELP = ("Claude 로그인이 만료됐거나 키가 잘못됐어요. 터미
 
 _lock = threading.Lock()
 CURRENT = {"running": False, "cycle_id": None, "started": None, "phase": None}
+LAST_START = {"t": 0.0}
 
 
 def python_cmd():
@@ -91,6 +92,11 @@ def build_prompt(cycle_id, settled, mode, why_mode, events=None):
         ctx["event_disclosures"] = events
     if mode == "AUDIT":
         ctx["audit"] = audit.report()
+    if mode in ("RETRO", "AUDIT"):
+        from . import discover
+        rep = discover.last_report()
+        ctx["discovery"] = {k: rep.get(k) for k in ("ts", "tested", "passed", "added_to_shadow")}
+        ctx["discovery"]["top"] = [{"name": t["name"], "spec": t["spec"], "test": t["test"]} for t in rep.get("top", [])[:5]]
     return body + "\n\n## 이번 사이클 컨텍스트\n\n```json\n" + \
         json.dumps(ctx, ensure_ascii=False, indent=1) + "\n```\n"
 
@@ -147,6 +153,7 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
     CYCLE_LOGS.mkdir(parents=True, exist_ok=True)
     log_path = CYCLE_LOGS / f"{cycle_id}.log"
     CURRENT.update(running=True, cycle_id=cycle_id, started=iso(), phase="점검")
+    LAST_START["t"] = time.time()
     result = {"cycle_id": cycle_id, "started": iso(), "ok": True}
 
     def log(line):
@@ -194,8 +201,8 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
             result.update(ok=False, error="claude CLI 없음")
             return result
 
-        label = {"FULL": "장중: 회고·연구·조사·예측·매매", "EVENT": "📢 공시 반응: 해당 종목 조사·매매",
-                 "AUDIT": "🧾 주간 감사: 전략 수정 검토·규칙 정리", "RETRO": f"{why}: 회고·전략 수정만"}[mode]
+        label = {"FULL": "장중: 회고·조사·예측·매매", "EVENT": "📢 공시 반응: 해당 종목 조사·매매",
+                 "AUDIT": "🧾 주간 감사: 전략 수정 검토·규칙 정리", "RETRO": f"{why}: 회고·연구(백테스트)·전략 수정"}[mode]
         log(f"🐹 에이전트 시작 — {label}")
         CURRENT["phase"] = "에이전트 실행"
         snap = guard.snapshot()
@@ -328,8 +335,8 @@ class AutoLoop:
         post = load_config()["cycle"].get("post_close_time", "15:45")
         today = now.date().isoformat()
         if weekday and hhmm >= post and self.post_close_done != today:
-            self.post_close_done = today
-            threading.Thread(target=run_cycle, daemon=True).start()
+            self.post_close_done = today   # 장 마감 후엔 정산이 없어도 연구(백테스트)를 위해 에이전트 실행
+            threading.Thread(target=run_cycle, kwargs={"force_agent": True}, daemon=True).start()
             return
         week = now.strftime("%G-W%V")   # 토요일 10시 이후 주 1회 감사
         if now.weekday() == 5 and hhmm >= "10:00" and self.audit_week != week:
@@ -347,8 +354,8 @@ class AutoLoop:
         self.event_starts = [(d, t) for d, t in self.event_starts if d == today]
         if len(self.event_starts) >= cfg["max_event_cycles_per_day"]:
             return
-        last = max([t for _, t in self.event_starts] + [0])
-        if now - last < cfg["min_gap_minutes"] * 60:
+        last = max([t for _, t in self.event_starts] + [LAST_START["t"]])
+        if now - last < cfg["min_gap_minutes"] * 60:   # 정규 사이클 포함, 마지막 사이클 시작 후 30분
             return
         self.event_starts.append((today, now))
         self.next_run = now + max(15, int(st.get("loop_minutes", 60))) * 60  # 정규 사이클은 뒤로 미룸

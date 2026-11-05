@@ -61,6 +61,20 @@ def propose(name, spec, why):
     return r
 
 
+def add_auto(name, spec, bt):
+    """자동 탐색이 찾은 규칙을 바로 그림자로 (이미 엄격한 백테스트를 통과함)."""
+    reg = _load()
+    r = {"id": uuid.uuid4().hex[:8], "name": "[자동] " + name[:55], "source": "auto",
+         "why": "엔진 자동 탐색: 과거 3년 학습·검증 구간 모두 기준선보다 좋았음 (다중 비교 주의)",
+         "spec": research.validate_spec(spec), "created": iso(),
+         "backtest": {"train": bt["train"], "test": bt["test"], "baseline_test": bt["baseline_test"],
+                      "verdict": {"pass": True, "reasons": []}, "period": {}}}
+    _set_status(reg, r, "shadow", "자동 탐색 엄격 기준 통과")
+    reg["rules"].append(r)
+    _save(reg)
+    return r
+
+
 def retire(rule_id, why):
     reg = _load()
     r = next((x for x in reg["rules"] if x["id"] == rule_id), None)

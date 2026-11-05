@@ -106,6 +106,7 @@ class Jobs:
     done = {}
     running = set()
     last_dart = 0.0
+    dart_warm = False   # 프로세스 시작 후 첫 확인은 이미 나온 공시를 기록만 (사이클 몰림 방지)
     on_event_cycle = None   # 서버가 사이클 실행 함수를 넣어 준다
 
     @classmethod
@@ -128,8 +129,20 @@ class Jobs:
 
 
 def _prefetch_and_evaluate():
-    research.prefetch()
-    return rules.evaluate()
+    """장 마감 후: 오늘 봉까지 받기 → 자동 가설 탐색 (메모리를 위해 별도 프로세스) → 그림자 채점·승격·은퇴."""
+    import subprocess
+    import sys
+    from .config import ROOT
+    msgs = [f"과거 데이터 갱신: {research.prefetch()['ok']}종목"]
+    try:
+        out = subprocess.run([sys.executable, "run.py", "discover"], cwd=ROOT, capture_output=True,
+                             text=True, encoding="utf-8", timeout=1800)
+        msgs += [ln for ln in out.stdout.splitlines() if ln.strip()]
+        if out.returncode != 0:
+            msgs.append(f"자동 탐색 오류: {out.stderr[-200:]}")
+    except Exception as e:  # noqa: BLE001
+        msgs.append(f"자동 탐색 실패: {e}")
+    return msgs + rules.evaluate()
 
 
 def scheduled(now):
@@ -153,9 +166,11 @@ def scheduled(now):
         except dart.DartError as e:
             dart.STATUS["error"] = str(e)
             new = []
+        warm = Jobs.dart_warm
+        Jobs.dart_warm = True
         for r in new:
             event("dart", f"📢 공시 · {r['name']} — {r['title']}")
-        if new and Jobs.on_event_cycle and _market_open(now):
+        if warm and new and Jobs.on_event_cycle and _market_open(now):
             Jobs.on_event_cycle(new)
 
 

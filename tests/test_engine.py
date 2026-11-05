@@ -383,6 +383,40 @@ class TestDart(Tmp):
         self.assertEqual(again, [])
 
 
+class TestImprovements(Tmp):
+    def test_forecast_without_view_rejected(self):
+        with self.assertRaises(forecast.Rejected):
+            forecast.record("005930", 3, 0.51, "other", "기저율 그대로")    # 기저율 ≈ 0.5025
+
+    def test_dart_first_poll_does_not_trigger(self):
+        calls = []
+        watch.Jobs.dart_warm, watch.Jobs.last_dart = False, 0
+        watch.Jobs.on_event_cycle = lambda new: calls.append(new)
+        items = [{"stock_code": "005930", "report_nm": "단일판매ㆍ공급계약체결", "rcept_no": "a1"}]
+        now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)
+        with mock.patch("phil.dart.key", lambda: "k"), mock.patch("phil.dart.fetch_today", lambda now=None: items), \
+                mock.patch("phil.watch._market_open", lambda now: True), mock.patch("phil.watch.Jobs.once"):
+            watch.scheduled(now)                                   # 첫 확인: 기록만
+            self.assertEqual(calls, [])
+            items.append({"stock_code": "005930", "report_nm": "자기주식취득결정", "rcept_no": "a2"})
+            watch.Jobs.last_dart = 0
+            watch.scheduled(now)                                   # 그 뒤 새 공시: 사이클
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0]["rcept_no"], "a2")
+        watch.Jobs.on_event_cycle = None
+
+    def test_discovery_strict_filter(self):
+        from phil import discover
+        cfg = {"min_test_trades": 40, "min_test_avg_net_pct": 0.3, "min_test_profit_factor": 1.3,
+               "min_train_avg_net_pct": 0.1, "min_excess_over_baseline_pct": 0.3}
+        ok = {"verdict": {"pass": True}, "train": {"avg_net_pct": 0.5},
+              "test": {"n": 50, "avg_net_pct": 0.8, "profit_factor": 1.4}, "baseline_test": {"avg_net_pct": 0.2}}
+        self.assertTrue(discover.strict_pass(ok, cfg))
+        near_base = dict(ok, baseline_test={"avg_net_pct": 0.6})
+        self.assertFalse(discover.strict_pass(near_base, cfg))   # 기준선과 0.3%p 미만 차이
+        self.assertGreater(len(list(discover.candidates())), 300)
+
+
 class TestGuard(unittest.TestCase):
     def test_restore(self):
         d = pathlib.Path(tempfile.mkdtemp())

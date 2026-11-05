@@ -34,6 +34,10 @@ def main():
             print(json.dumps(cycle.run_cycle(), ensure_ascii=False, indent=1))
             if i < n - 1:
                 time.sleep(gap * 60)
+    elif cmd == "discover":
+        from phil import discover
+        for m in discover.run():
+            print(m)
     elif cmd == "prefetch":
         from phil import research
         print(json.dumps(research.prefetch(), ensure_ascii=False))
