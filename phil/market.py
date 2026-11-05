@@ -131,6 +131,11 @@ def market_overview():
             out[s] = naver.index_quote(s)
         except naver.DataError as e:
             out[s] = {"error": str(e)}
+    try:
+        from .research import regime
+        out["regime"] = regime(naver.daily_bars("KOSPI", 120))
+    except Exception:  # noqa: BLE001
+        out["regime"] = None
     ok, why = trading_window()
     out["can_trade_now"] = ok
     out["reason"] = why

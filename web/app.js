@@ -70,7 +70,11 @@ async function loadHome() {
   }
   const mk = S.market || {};
   const idx = (k) => mk[k] && mk[k].price ? `${mk[k].name} ${mk[k].price.toLocaleString()} <span class="${ud(mk[k].change_pct)}">${sp(mk[k].change_pct)}</span>` : "";
-  $("#marketLine").innerHTML = `${mk.can_trade_now ? "🟢 장중" : "⚪ " + esc(mk.reason || "")} · ${idx("KOSPI")} · ${idx("KOSDAQ")}`;
+  const rg = mk.regime;
+  $("#marketLine").innerHTML = `${mk.can_trade_now ? "🟢 장중" : "⚪ " + esc(mk.reason || "")} · ${idx("KOSPI")} · ${idx("KOSDAQ")}` +
+    (rg ? ` · <b>${rg.label === "상승장" ? "📈" : rg.label === "하락장" ? "📉" : "➖"} ${esc(rg.label)}</b> <span class="sub">(코스피 60일선 대비 ${sp(rg.kospi_vs_ma60)})</span>` : "");
+  const cc = sc.claude_cost || {};
+  $("#costLine").innerHTML = cc.total_usd != null ? `🤖 Claude 비용 오늘 $${cc.today_usd.toFixed(2)} · 누적 $${cc.total_usd.toFixed(2)} (≈${won(cc.total_krw)}) · <b>비용 차감 후 <span class="${ud(sc.return_after_cost_pct)}">${sp(sc.return_after_cost_pct)}</span></b>` : "";
   const run = S.current.running;
   $("#runPill").textContent = run ? "🐹 " + (S.current.phase || "실행 중") : mk.can_trade_now ? "장중 · 모의투자" : "장 마감 · 모의투자";
   $("#runPill").classList.toggle("run", run);

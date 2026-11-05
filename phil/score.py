@@ -2,7 +2,8 @@
 from collections import defaultdict
 
 from . import policy
-from .config import FORECASTS, LEDGER, META, load_config, load_json, load_jsonl, save_json
+from .config import (CYCLES_LOG, FORECASTS, LEDGER, META, load_config, load_json, load_jsonl, now_kst,
+                     parse_ts, save_json, KST)
 from .ledger import cash, equity
 
 
@@ -52,7 +53,12 @@ def report(kospi_now=None):
         bench = round((kospi_now / meta["start_kospi"] - 1) * 100, 2)
     my_ret = round((eq_now / start - 1) * 100, 2)
     fc = load_jsonl(FORECASTS)
+    cost = claude_cost(cfg)
+    net_after = eq_now - cost["total_krw"]
     return {
+        "claude_cost": cost,
+        "return_after_cost_pct": round((net_after / start - 1) * 100, 2),
+        "pnl_after_cost_krw": net_after - start,
         "cash_krw": cash(entries, cfg),
         "equity_krw": eq_now,
         "bankroll_start_krw": start,
@@ -87,3 +93,19 @@ def verified_edge_classes(by_class=None):
         if s["n"] >= 10 and s["pnl_krw"] > 0 and c and c["brier_delta"] < 0:
             out.append(k)
     return sorted(out)
+
+
+def claude_cost(cfg=None):
+    """사이클 기록의 Claude 사용료 합계 (달러 → 원, 설정 환율)."""
+    cfg = cfg or load_config()
+    rate = cfg.get("usd_krw", 1450)
+    today = now_kst().date().isoformat()
+    total = today_usd = 0.0
+    for c in load_jsonl(CYCLES_LOG):
+        usd = c.get("cost_usd") or 0
+        total += usd
+        t = parse_ts(c.get("finished") or c.get("started"))
+        if t and t.astimezone(KST).date().isoformat() == today:
+            today_usd += usd
+    return {"total_usd": round(total, 2), "today_usd": round(today_usd, 2), "usd_krw": rate,
+            "total_krw": round(total * rate), "today_krw": round(today_usd * rate)}

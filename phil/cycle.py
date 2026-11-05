@@ -27,6 +27,7 @@ AUTH_HELP = ("Claude 로그인이 만료됐거나 키가 잘못됐어요. 터미
              ".env 에 ANTHROPIC_API_KEY 를 넣어 주세요. (이번 실행은 비용 0)")
 
 _lock = threading.Lock()
+FAILS = {"in_row": 0}
 CURRENT = {"running": False, "cycle_id": None, "started": None, "phase": None}
 LAST_START = {"t": 0.0}
 
@@ -281,9 +282,21 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
     finally:
         result["finished"] = iso()
         append_jsonl(CYCLES_LOG, result)
+        _alert_on_failure(result)
         CURRENT.update(running=False, phase=None, pid=None)
         _lock.release()
     return result
+
+
+def _alert_on_failure(result):
+    """로그인 만료는 바로, 그 밖의 실패는 2번 연속이면 휴대폰으로."""
+    from . import notify
+    if result.get("ok"):
+        FAILS["in_row"] = 0
+        return
+    FAILS["in_row"] += 1
+    if result.get("error_kind") == "auth" or FAILS["in_row"] == 2:
+        notify.alert(f"⚠️ Phil 사이클 실패 ({FAILS['in_row']}번 연속): {result.get('error', '')[:300]}")
 
 
 def stop_current():

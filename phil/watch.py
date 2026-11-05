@@ -175,6 +175,8 @@ def scheduled(now):
         Jobs.once("rule_signals", day, rules.run_signals)
     if weekday and hhmm >= "16:10":
         Jobs.once("post_close", day, _prefetch_and_evaluate)
+    if weekday and hhmm >= "15:50":
+        Jobs.once("daily_summary", day, notify.daily_summary)
     if not research._cache_path("KOSPI").exists():
         Jobs.once("first_prefetch", day, lambda: [f"과거 데이터 준비: {research.prefetch()['ok']}종목"])
     # 공시 감시
@@ -263,6 +265,9 @@ def tick():
 
 
 class Watcher:
+    errors_in_row = 0
+    last_alert = 0.0
+
     def __init__(self, interval=60):
         self.interval = interval
         threading.Thread(target=self._run, daemon=True).start()
@@ -272,9 +277,14 @@ class Watcher:
             try:
                 tick()
                 STATUS["last_error"] = None
+                Watcher.errors_in_row = 0
             except Exception as e:  # noqa: BLE001 — 감시는 죽지 않는다
                 STATUS["last_error"] = f"{e}"
                 traceback.print_exc()
+                Watcher.errors_in_row += 1
+                if Watcher.errors_in_row >= 5 and time.time() - Watcher.last_alert > 3600:
+                    Watcher.last_alert = time.time()
+                    notify.alert(f"⚠️ Phil 감시 루프가 5분 넘게 오류 중: {str(e)[:200]}")
             time.sleep(self.interval)
 
 

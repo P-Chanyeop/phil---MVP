@@ -23,7 +23,8 @@ FEATURES = {
     "close_vs_ma60": "종가의 60일선 대비 %", "rsi14": "RSI(14)", "range_pct": "일중 변동폭 %",
     "close_pos": "일중 위치 0~1 (저가=0, 고가=1)", "from_52w_high": "52주 고가 대비 % (0 이하)",
     "from_52w_low": "52주 저가 대비 % (0 이상)", "kospi_ret_1d": "코스피 오늘 등락률 %",
-    "kospi_ret_5d": "코스피 5일 수익률 %", "is_kosdaq": "코스닥이면 1",
+    "kospi_ret_5d": "코스피 5일 수익률 %", "kospi_ret_20d": "코스피 20일 수익률 %",
+    "kospi_vs_ma60": "코스피의 60일선 대비 % (양수=상승장, 음수=하락장)", "is_kosdaq": "코스닥이면 1",
 }
 OPS = {">": lambda a, b: a > b, "<": lambda a, b: a < b, ">=": lambda a, b: a >= b,
        "<=": lambda a, b: a <= b}
@@ -135,16 +136,35 @@ def features(bars, kospi_by_date, is_kosdaq):
             "from_52w_low": (c / lo52 - 1) * 100,
             "kospi_ret_1d": k[0] if k else 0.0,
             "kospi_ret_5d": k[1] if k else 0.0,
+            "kospi_ret_20d": k[2] if k else 0.0,
+            "kospi_vs_ma60": k[3] if k else 0.0,
             "is_kosdaq": 1 if is_kosdaq else 0,
         })
     return out
 
 
 def _kospi_map(kbars):
+    """날짜 → (코스피 1일, 5일, 20일 수익률 %, 60일선 대비 %) — 시장 분위기 지표."""
     m = {}
-    for i in range(5, len(kbars)):
-        m[kbars[i][0]] = ((kbars[i][4] / kbars[i - 1][4] - 1) * 100, (kbars[i][4] / kbars[i - 5][4] - 1) * 100)
+    closes = [b[4] for b in kbars]
+    for i in range(60, len(kbars)):
+        c = closes[i]
+        ma60 = sum(closes[i - 59:i + 1]) / 60
+        m[kbars[i][0]] = ((c / closes[i - 1] - 1) * 100, (c / closes[i - 5] - 1) * 100,
+                          (c / closes[i - 20] - 1) * 100, (c / ma60 - 1) * 100)
     return m
+
+
+def regime(kbars):
+    """지금 시장 분위기 (에이전트·화면용)."""
+    k = _kospi_map(kbars)
+    if not k:
+        return None
+    d = max(k)
+    r1, r5, r20, vs60 = k[d]
+    label = "상승장" if vs60 > 2 else "하락장" if vs60 < -2 else "횡보"
+    return {"date": d, "label": label, "kospi_vs_ma60": round(vs60, 2), "kospi_ret_20d": round(r20, 2),
+            "kospi_ret_5d": round(r5, 2), "note": "코스피가 60일 평균보다 위면 상승장, 아래면 하락장"}
 
 
 # ───────────────────────── 규칙 검사 ─────────────────────────
@@ -281,16 +301,16 @@ def backtest(spec, data=None, prepared=None):
                 if r:
                     base_all.append({"date": f["date"], "ret": r[0], "up": r[3]})
             if matches(spec, f):
-                cand.setdefault(f["date"], []).append((rank_key(spec, f), code, i))
+                cand.setdefault(f["date"], []).append((rank_key(spec, f), code, i, f["kospi_vs_ma60"]))
     base_cache[bkey] = base_all
     trades = []
     for d, lst in cand.items():
         lst.sort()
-        for _, code, i in lst[:spec["max_per_day"]]:
+        for _, code, i, kv in lst[:spec["max_per_day"]]:
             r = simulate(bars_by[code], i, spec, costs)
             if r:
                 trades.append({"date": d, "code": code, "name": uni[code]["name"], "ret": r[0],
-                               "reason": r[1], "held": r[2], "up": r[3]})
+                               "reason": r[1], "held": r[2], "up": r[3], "bull": kv > 0})
     trades.sort(key=lambda t: t["date"])
     train = [t for t in trades if t["date"] < split]
     test = [t for t in trades if t["date"] >= split]
@@ -301,6 +321,8 @@ def backtest(spec, data=None, prepared=None):
         "period": {"from": dates[60] if len(dates) > 60 else dates[0], "split": split, "to": dates[-1]},
         "train": _stats(train), "test": _stats(test),
         "baseline_train": _stats(btrain), "baseline_test": _stats(btest),
+        "by_regime": {"상승장": _stats([t for t in trades if t["bull"]]),
+                      "하락장": _stats([t for t in trades if not t["bull"]])},
         "verdict": verdict(_stats(train), _stats(test), _stats(btest)),
         "recent_test_trades": [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in t.items()}
                                for t in test[-8:]],

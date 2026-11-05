@@ -89,7 +89,8 @@
       "min_train_avg_net_pct": 0.1,
       "min_excess_over_baseline_pct": 0.3,
       "max_new_per_day": 2,
-      "max_auto_active": 6
+      "max_auto_active": 6,
+      "min_robust_share": 0.75
     }
   },
   "safety": {
@@ -130,5 +131,7 @@
       "09:10",
       "15:10"
     ]
-  }
+  },
+  "usd_krw": 1450,
+  "_comment_usd_krw": "Claude 비용(달러)을 원화로 바꿀 때 쓰는 환율. 대략값이면 충분."
 }

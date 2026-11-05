@@ -37,7 +37,7 @@ class Tmp(unittest.TestCase):
                              (notify, "FORECASTS", "f.jsonl"), (notify, "NOTIFY_STATE", "n.json"),
                              (rules, "RULES", "rules.json"), (rules, "RULE_SIGNALS", "sig.jsonl"),
                              (safety, "META", "m.json"), (dart, "DISCLOSURES", "d.jsonl"),
-                             (park, "PARK", "park.json")]:
+                             (park, "PARK", "park.json"), (score, "CYCLES_LOG", "cyc.jsonl")]:
             mock.patch.object(mod, name, self.d / f).start()
         mock.patch("phil.market.universe", lambda refresh=False: {
             "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
@@ -475,6 +475,46 @@ class TestPark(Tmp):
         self.etf = 110.0                                         # 시장 +10% → 대기 자금도 오름
         park.mark(110.0)                                         # (감시 루프가 1분마다 시세 반영)
         self.assertGreater(ledger.equity(ledger.read_ledger()), eq0 + 500_000)
+
+
+class TestUpgrades(Tmp):
+    def test_claude_cost_after_cost_return(self):
+        config.dump_jsonl(self.d / "cyc.jsonl", [{"finished": config.iso(), "cost_usd": 1.0},
+                                                 {"finished": "2020-01-01T00:00:00Z", "cost_usd": 2.0}])
+        c = score.claude_cost({"usd_krw": 1000})
+        self.assertEqual((c["total_usd"], c["today_usd"], c["total_krw"]), (3.0, 1.0, 3000))
+        r = score.report()
+        self.assertLess(r["return_after_cost_pct"], r["return_pct"])
+
+    def test_regime_guard(self):
+        from phil import discover
+        cfg = {"min_test_trades": 1, "min_test_avg_net_pct": 0, "min_test_profit_factor": 0,
+               "min_train_avg_net_pct": -9, "min_excess_over_baseline_pct": -9}
+        base = {"name": "x", "spec": {"conditions": [["ret_1d", ">", 3]], "horizon": 3, "stop": 0.05,
+                                      "target": None, "max_per_day": 3, "rank_by": None}}
+        ok = dict(base, by_regime={"하락장": {"n": 30, "avg_net_pct": 0.5}})
+        self.assertEqual(discover.regime_guard(ok, None, cfg)["spec"], base["spec"])   # 하락장도 플러스 → 그대로
+        bad = dict(base, by_regime={"하락장": {"n": 30, "avg_net_pct": -0.5}})
+        gated_bt = {"spec": {**base["spec"], "conditions": base["spec"]["conditions"] + [["kospi_vs_ma60", ">", 0]]},
+                    "train": {"avg_net_pct": 1}, "test": {"n": 50, "avg_net_pct": 1, "profit_factor": 2},
+                    "baseline_test": {"avg_net_pct": 0}, "by_regime": {}, "verdict": {"pass": True}}
+        with mock.patch("phil.research.backtest", lambda spec, prepared=None: gated_bt):
+            g = discover.regime_guard(bad, None, cfg)
+        self.assertIn(["kospi_vs_ma60", ">", 0], g["spec"]["conditions"])
+        self.assertIn("상승장만", g["name"])
+
+    def test_cycle_failure_alerts(self):
+        from phil import cycle
+        sent = []
+        cycle.FAILS["in_row"] = 0
+        with mock.patch("phil.notify.alert", lambda t: sent.append(t)):
+            cycle._alert_on_failure({"ok": False, "error": "시세 접속 실패"})
+            self.assertEqual(sent, [])                                    # 1번째는 조용히
+            cycle._alert_on_failure({"ok": False, "error": "시세 접속 실패"})
+            self.assertEqual(len(sent), 1)                                # 2번 연속이면 알림
+            cycle._alert_on_failure({"ok": True})
+            cycle._alert_on_failure({"ok": False, "error_kind": "auth", "error": "로그인 만료"})
+            self.assertEqual(len(sent), 2)                                # 로그인 만료는 바로
 
 
 class TestGuard(unittest.TestCase):

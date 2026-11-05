@@ -108,3 +108,50 @@ def scan_and_notify():
             return 0  # 실패하면 상태를 저장하지 않아 다음에 다시 시도
     save_json(NOTIFY_STATE, now_seen)
     return len(msgs)
+
+
+def alert(text):
+    """실패해도 조용히 (알림이 시스템을 멈추면 안 됨)."""
+    try:
+        if configured():
+            send(text)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def daily_summary():
+    """평일 장 마감 후 하루 요약."""
+    from . import ledger, naver, park, score
+    from .config import INTRADAY, KST, load_config, now_kst, parse_ts
+    today = now_kst().date().isoformat()
+    entries = load_jsonl(LEDGER)
+    intr = [r for r in load_jsonl(INTRADAY) if r.get("date") == today]
+    eq = ledger.equity(entries)
+    lines = [f"🐹 Phil 오늘 요약 ({today})"]
+    if intr:
+        d = eq - intr[0]["equity"]
+        lines.append(f"오늘 손익 {d:+,.0f}원 ({d / intr[0]['equity'] * 100:+.2f}%) · 자산 {eq:,.0f}원")
+    try:
+        k = naver.index_quote("KOSPI")
+        lines.append(f"코스피 {k['price']:,.2f} ({k['change_pct']:+.2f}%)")
+    except Exception:  # noqa: BLE001
+        pass
+    closed = [e for e in entries if e["status"] == "closed" and e.get("exit_ts")
+              and parse_ts(e["exit_ts"]).astimezone(KST).date().isoformat() == today]
+    if closed:
+        lines.append("청산: " + ", ".join(f"{e['name']} {e['ret_pct']:+.1f}%" for e in closed))
+    opens = [e for e in entries if e["status"] == "open"]
+    lines.append(f"보유 {len(opens)}종목 + 대기자금 {park.summary()['value_krw']:,.0f}원")
+    fs = [r for r in load_jsonl(FORECASTS) if r["status"] in ("up", "down") and r.get("settled_ts")
+          and parse_ts(r["settled_ts"]).astimezone(KST).date().isoformat() == today]
+    if fs:
+        hits = sum(1 for r in fs if (r["est_prob"] > 0.5) == (r["status"] == "up"))
+        lines.append(f"예측 결과 {hits}/{len(fs)} 맞힘")
+    sc = score.report()
+    c = sc["claude_cost"]
+    lines.append(f"Claude 비용 오늘 ${c['today_usd']:.2f} · 누적 ${c['total_usd']:.2f} (≈{c['total_krw']:,}원)")
+    lines.append(f"누적 수익 {sc['return_pct']:+.2f}% · 비용 차감 후 {sc['return_after_cost_pct']:+.2f}%")
+    alert("\n".join(lines))
+    return ["📨 하루 요약 보냄"] if configured() else []
