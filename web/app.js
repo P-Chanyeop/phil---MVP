@@ -298,6 +298,11 @@ async function loadLive() {
     const r = (LIVE.equity_krw / LIVE.start_krw - 1) * 100;
     $("#pnl").innerHTML = `<span class="${ud(r)}">${sp(r)}</span> · 시작 ${won(LIVE.start_krw)} · 실시간`;
   }
+  if (LIVE.intraday.length) {   // 오늘 손익 = 지금 자산 − 오늘 장 시작 때 자산
+    const base = LIVE.intraday[0].equity, now = LIVE.equity_krw, d = now - base, r = d / base * 100;
+    $("#todayPnl").classList.remove("hidden");
+    $("#todayPnl").innerHTML = `오늘 <b class="${ud(d)}">${won(d, 1)}</b> <span class="${ud(r)}">(${sp(r)})</span>`;
+  }
   if (chartMode === "today" && LIVE.intraday.length >= 2) intradayChart(LIVE.intraday, LIVE.start_krw);
 }
 async function loadFeed() {

@@ -115,3 +115,4 @@ details summary{cursor:pointer;font-weight:700;font-size:14px;color:var(--accent
 .feed-new{animation:fadein .8s}
 @keyframes fadein{from{background:var(--accent-soft)}to{background:transparent}}
 #chartChips .chipbtn{padding:5px 12px;font-size:12px}
+.today{margin-top:6px;font-size:15px;font-weight:700}.today b{font-size:18px}
