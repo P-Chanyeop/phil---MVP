@@ -83,14 +83,21 @@ def recent(code=None, n=30):
 
 
 def _xml_to_text(raw):
-    t = raw.decode("utf-8", errors="replace")
+    """DART 원문 XML → 읽기 쉬운 글. 표는 한 행을 한 줄로 ('매출액 | 당해실적 | 25,152 | 24,268 | ...')."""
+    t = raw.decode("utf-8", errors="replace").replace("\r", "")
     t = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", t)
-    t = re.sub(r"(?i)<(br|p|tr|title|td|th|li|div)[^>]*>", "\n", t)
+    t = re.sub(r"(?i)</?(tr)[^>]*>", "\n", t)                       # 표의 행 = 줄
+    t = re.sub(r"(?i)<(td|th|te|tu)[^>]*>", " | ", t)                # 칸 = ' | '
+    t = re.sub(r"(?i)<(br|p|title|li|div|table|section-\d+|cover)[^>]*>", "\n", t)
     t = re.sub(r"<[^>]+>", " ", t)
     t = html.unescape(t)
     t = re.sub(r"[ \t\u00a0]+", " ", t)
-    t = re.sub(r"\n\s*\n+", "\n", t)
-    return t.strip()
+    lines = []
+    for ln in t.split("\n"):
+        ln = re.sub(r"(\s*\|\s*)+", " | ", ln).strip(" |")
+        if ln:
+            lines.append(ln)
+    return "\n".join(lines)
 
 
 def document_text(rcept_no, max_chars=6000):
@@ -98,7 +105,7 @@ def document_text(rcept_no, max_chars=6000):
     from .config import JOURNAL
     if not re.fullmatch(r"\d{14}", str(rcept_no)):
         raise DartError("접수번호(rcept_no)는 숫자 14자리")
-    cache = JOURNAL / "dart-docs" / f"{rcept_no}.txt"
+    cache = JOURNAL / "dart-docs" / f"{rcept_no}.v2.txt"   # v2: 표의 한 행을 한 줄로
     if cache.exists():
         text = cache.read_text(encoding="utf-8")
     else:

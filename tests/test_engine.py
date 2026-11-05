@@ -411,6 +411,14 @@ class TestDartDocument(Tmp):
         self.assertNotIn("<", r["text"])
         self.assertNotIn("x{}", r["text"])
 
+    def test_table_rows_stay_on_one_line(self):
+        xml = ("<TABLE><TR><TD>구분</TD><TD>당기실적</TD><TD>전기실적</TD></TR>\r\n"
+               "<TR><TE>영업이익</TE><TE>1,008</TE><TE>849</TE></TR></TABLE>").encode()
+        text = dart._xml_to_text(xml)
+        self.assertIn("구분 | 당기실적 | 전기실적", text)
+        self.assertIn("영업이익 | 1,008 | 849", text)
+        self.assertNotIn("\r", text)
+
     def test_error_message(self):
         body = "<result><status>014</status><message>파일이 존재하지 않습니다.</message></result>".encode()
         with mock.patch("phil.dart.key", lambda: "k"), mock.patch("phil.config.JOURNAL", self.d), \
