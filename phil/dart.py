@@ -82,22 +82,32 @@ def recent(code=None, n=30):
     return rows[-n:][::-1]
 
 
+_CELL = re.compile(r"(?is)<(td|th|te|tu)\b[^>]*>(.*?)</\1\s*>")
+_ROW = re.compile(r"(?is)<tr\b[^>]*>(.*?)</tr\s*>")
+
+
+def _flat(fragment):
+    """태그를 지우고 한 줄로 (칸 안의 <P> 문단 줄바꿈도 없앰)."""
+    t = re.sub(r"<[^>]+>", " ", fragment)
+    return re.sub(r"\s+", " ", html.unescape(t)).strip()
+
+
+def _row_line(m):
+    cells = [_flat(c) for _, c in _CELL.findall(m.group(1))]
+    cells = [c for c in cells if c]
+    return "\n" + (" | ".join(cells) if cells else _flat(m.group(1))) + "\n"
+
+
 def _xml_to_text(raw):
-    """DART 원문 XML → 읽기 쉬운 글. 표는 한 행을 한 줄로 ('매출액 | 당해실적 | 25,152 | 24,268 | ...')."""
+    """DART 원문 XML → 읽기 쉬운 글. 표는 한 행을 한 줄로 ('영업이익 | 당해실적 | 1,008 | 849 | 18.7')."""
     t = raw.decode("utf-8", errors="replace").replace("\r", "")
     t = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", t)
-    t = re.sub(r"(?i)</?(tr)[^>]*>", "\n", t)                       # 표의 행 = 줄
-    t = re.sub(r"(?i)<(td|th|te|tu)[^>]*>", " | ", t)                # 칸 = ' | '
-    t = re.sub(r"(?i)<(br|p|title|li|div|table|section-\d+|cover)[^>]*>", "\n", t)
+    t = _ROW.sub(_row_line, t)                                         # 표의 행 = 한 줄
+    t = re.sub(r"(?i)<(br|p|title|li|div|table|section-\d+|cover)\b[^>]*>", "\n", t)
     t = re.sub(r"<[^>]+>", " ", t)
     t = html.unescape(t)
-    t = re.sub(r"[ \t\u00a0]+", " ", t)
-    lines = []
-    for ln in t.split("\n"):
-        ln = re.sub(r"(\s*\|\s*)+", " | ", ln).strip(" |")
-        if ln:
-            lines.append(ln)
-    return "\n".join(lines)
+    lines = [re.sub(r"[ \t\u00a0]+", " ", ln).strip() for ln in t.split("\n")]
+    return "\n".join(ln for ln in lines if ln)
 
 
 def document_text(rcept_no, max_chars=6000):
@@ -105,7 +115,7 @@ def document_text(rcept_no, max_chars=6000):
     from .config import JOURNAL
     if not re.fullmatch(r"\d{14}", str(rcept_no)):
         raise DartError("접수번호(rcept_no)는 숫자 14자리")
-    cache = JOURNAL / "dart-docs" / f"{rcept_no}.v2.txt"   # v2: 표의 한 행을 한 줄로
+    cache = JOURNAL / "dart-docs" / f"{rcept_no}.v3.txt"   # v3: 표의 한 행을 한 줄로 (칸 안 문단 포함)
     if cache.exists():
         text = cache.read_text(encoding="utf-8")
     else:

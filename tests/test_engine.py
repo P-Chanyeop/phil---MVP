@@ -419,6 +419,14 @@ class TestDartDocument(Tmp):
         self.assertIn("영업이익 | 1,008 | 849", text)
         self.assertNotIn("\r", text)
 
+    def test_cells_with_paragraphs(self):
+        xml = ("<TABLE><TBODY><TR ACOPY='Y'>\r\n<TD><P>영업이익</P></TD><TD>\n<P>당해실적</P></TD>"
+               "<TD ALIGN='RIGHT'><P>1,008</P></TD><TD><P>849</P></TD><TD><P>18.7</P></TD></TR>"
+               "<TR><TD><P>-</P></TD><TD></TD></TR></TBODY></TABLE><P>※ 잠정치</P>").encode()
+        text = dart._xml_to_text(xml)
+        self.assertIn("영업이익 | 당해실적 | 1,008 | 849 | 18.7", text)
+        self.assertIn("※ 잠정치", text)
+
     def test_error_message(self):
         body = "<result><status>014</status><message>파일이 존재하지 않습니다.</message></result>".encode()
         with mock.patch("phil.dart.key", lambda: "k"), mock.patch("phil.config.JOURNAL", self.d), \
