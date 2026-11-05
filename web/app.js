@@ -226,8 +226,25 @@ async function loadNotify() {
 $("#btnTgDetect").onclick = async () => { try { const r = await api("/api/notify/detect", {}); toast(`연결됐어요: ${r.chat}`); loadNotify(); } catch (e) { toast(e.message); } };
 $("#btnTgTest").onclick = async () => { try { await api("/api/notify/test", {}); toast("테스트 알림을 보냈어요"); } catch (e) { toast(e.message); } };
 
+async function loadTuning() {
+  try {
+    const t = await api("/api/tuning");
+    const lv = (t.defense || {}).level || 0, cs = t.cost_saver || {}, tr = t.trial, w = t.window_10d;
+    $("#tuneInfo").innerHTML = `<b>최근 10거래일</b>${w ? `비용 전 ${won(w.pnl_krw, 1)} · Claude ${won(w.cost_krw)} · 비용 후 <span class="${ud(w.after_cost_pct)}">${sp(w.after_cost_pct)}</span>` : "기록이 10거래일 쌓이면 시작해요"}<br>
+      <b>방어 모드</b>${lv ? `<span class="neg">${lv}단계 (매수 크기↓ · 기준↑)</span>` : "꺼짐"}<br>
+      <b>비용 절감</b>${cs.active ? `<span class="neg">켜짐 (자동 반복 4시간)</span>` : "꺼짐"}<br>
+      <b>시험 중인 설정</b>${tr ? `${esc(tr.label)}: ${tr.old} → <b>${tr.new}</b> <span class="sub">${esc(tr.why.slice(0, 80))}</span>` : "없음"}`;
+    $("#btnTuneRevert").classList.toggle("hidden", !tr);
+    $("#btnDefenseReset").classList.toggle("hidden", !lv);
+    $("#tuneHist").innerHTML = (t.history || []).slice(0, 8).map((h) => `<div class="item"><div class="q">${esc(h.msg)}</div><div class="meta"><span>${ago(h.ts)}</span></div></div>`).join("");
+  } catch (e) { $("#tuneInfo").textContent = "확인 실패: " + e.message; }
+}
+$("#btnTuneRevert").onclick = async () => { if (!confirm("시험 중인 설정을 원래대로 되돌릴까요?")) return; await api("/api/tuning/revert", {}); toast("되돌렸어요"); loadTuning(); };
+$("#btnDefenseReset").onclick = async () => { if (!confirm("방어 모드를 해제할까요? 매수 크기와 기준이 원래대로 돌아가요.")) return; await api("/api/tuning/defense_reset", {}); toast("방어 모드를 해제했어요"); loadTuning(); };
+
 async function loadSettings() {
   loadNotify();
+  loadTuning();
   $("#parkToggle").checked = S?.operator?.park_enabled !== false;
   const d = S?.dart || {};
   $("#dartInfo").innerHTML = d.key_set

@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import time
 
-from phil import cycle, dart, kis, ledger, market, naver, notify, park, policy, resolve, rules, safety, score, watch
+from phil import cycle, dart, kis, ledger, market, naver, notify, park, policy, resolve, rules, safety, score, tuning, watch
 from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, INTRADAY, LEDGER, RETROS, ROOT, STRATEGY, WATCH_EVENTS,
                          STRATEGY_HISTORY, load_config, load_env, load_jsonl,
                          operator_state, save_operator_state)
@@ -140,6 +140,7 @@ def feed(limit=40):
     icons = {"kis": "🏦", "kis_error": "⚠️", "dart": "📢", "rule": "🤖", "safety": "⛔", "job": "🗂️",
              "job_error": "⚠️"}
     icons["park"] = "💤"
+    icons["tune"] = "🎛️"
     for w in load_jsonl(WATCH_EVENTS)[-150:]:
         if w.get("kind") in icons:
             items.append({"ts": w["ts"], "icon": icons[w["kind"]], "text": w["msg"], "sub": ""})
@@ -279,6 +280,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"rules": rules.summary()[::-1],
                                         "signals": load_jsonl(RULE_SIGNALS)[::-1][:40],
                                         "discovery": {k: rep.get(k) for k in ("ts", "tested", "passed", "added_to_shadow", "seconds")}})
+            if p == "/api/tuning":
+                return self._send(200, tuning.summary())
             if p == "/api/live":
                 return self._send(200, live())
             if p == "/api/feed":
@@ -336,6 +339,11 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if p == "/api/cycle/stop":
                 return self._send(200, {"ok": cycle.stop_current()})
+            if p == "/api/tuning/revert":
+                return self._send(200, {"msg": tuning.revert_trial_by_operator()})
+            if p == "/api/tuning/defense_reset":
+                tuning.reset_defense_by_operator()
+                return self._send(200, {"ok": True})
             if p == "/api/notify/detect":
                 try:
                     return self._send(200, {"chat": notify.detect_chat()})

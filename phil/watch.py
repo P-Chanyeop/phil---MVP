@@ -10,7 +10,7 @@ import threading
 import time
 import traceback
 
-from . import dart, kis, ledger, naver, notify, park, research, rules, safety
+from . import dart, kis, ledger, naver, notify, park, research, rules, safety, tuning
 from .config import (INTRADAY, KIS_LEDGER, WATCH_EVENTS, append_jsonl, iso, load_config,
                      load_jsonl, now_kst, operator_state)
 from .market import kst_date
@@ -139,7 +139,8 @@ class Jobs:
         def run():
             try:
                 for m in fn() or []:
-                    event("rule" if "규칙" in str(m) else "job", str(m))
+                    kind = "rule" if "규칙" in str(m) else "tune" if name == "tuning" else "job"
+                    event(kind, str(m))
                     _say(str(m))
             except Exception as e:  # noqa: BLE001
                 event("job_error", f"{name}: {e}")
@@ -177,6 +178,8 @@ def scheduled(now):
         Jobs.once("post_close", day, _prefetch_and_evaluate)
     if weekday and hhmm >= "15:50":
         Jobs.once("daily_summary", day, notify.daily_summary)
+    if weekday and hhmm >= "15:55":
+        Jobs.once("tuning", day, tuning.daily_job)
     if not research._cache_path("KOSPI").exists():
         Jobs.once("first_prefetch", day, lambda: [f"과거 데이터 준비: {research.prefetch()['ok']}종목"])
     # 공시 감시

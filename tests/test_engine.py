@@ -8,7 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from phil import (config, dart, forecast, guard, kis, ledger, market, notify, park, policy, research,  # noqa: E402
-                  resolve, rules, safety, score, watch)
+                  resolve, rules, safety, score, tuning, watch)
 
 KST = config.KST
 OPEN_TIME = dt.datetime(2026, 10, 14, 10, 0, tzinfo=KST)  # 수요일 장중
@@ -37,7 +37,9 @@ class Tmp(unittest.TestCase):
                              (notify, "FORECASTS", "f.jsonl"), (notify, "NOTIFY_STATE", "n.json"),
                              (rules, "RULES", "rules.json"), (rules, "RULE_SIGNALS", "sig.jsonl"),
                              (safety, "META", "m.json"), (dart, "DISCLOSURES", "d.jsonl"),
-                             (park, "PARK", "park.json"), (score, "CYCLES_LOG", "cyc.jsonl")]:
+                             (park, "PARK", "park.json"), (score, "CYCLES_LOG", "cyc.jsonl"),
+                             (config, "TUNING", "tuning.json"), (tuning, "TUNING", "tuning.json"),
+                             (tuning, "DAILY", "daily.jsonl"), (config, "OPERATOR", "op.json")]:
             mock.patch.object(mod, name, self.d / f).start()
         mock.patch("phil.market.universe", lambda refresh=False: {
             "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
@@ -515,6 +517,51 @@ class TestUpgrades(Tmp):
             cycle._alert_on_failure({"ok": True})
             cycle._alert_on_failure({"ok": False, "error_kind": "auth", "error": "로그인 만료"})
             self.assertEqual(len(sent), 2)                                # 로그인 만료는 바로
+
+
+class TestTuning(Tmp):
+    def days(self, equities, cost_per_day=0.0):
+        rows = [{"date": f"2026-10-{i + 1:02d}", "equity": e, "cost_usd_total": i * cost_per_day, "kospi": 100}
+                for i, e in enumerate(equities)]
+        config.dump_jsonl(self.d / "daily.jsonl", rows)
+
+    def test_defense_levels_and_overlay(self):
+        base = config.load_config()["limits"]["max_position_pct"]
+        self.days([10_000_000] + [9_800_000] * 10)               # 10일 -2%
+        self.assertTrue(tuning.check_defense())
+        cfg = config.load_config()
+        self.assertAlmostEqual(cfg["limits"]["max_position_pct"], base * 0.5)
+        self.assertEqual(cfg["policy"]["exploration"]["max_per_day"], 1)
+        self.days([9_800_000] + [9_900_000] * 10)                # 회복 +1%
+        tuning.check_defense()
+        self.assertAlmostEqual(config.load_config()["limits"]["max_position_pct"], base)
+
+    def test_cost_saver(self):
+        config.save_operator_state({"loop_minutes": 120})
+        self.days([10_000_000] * 11, cost_per_day=1.0)           # 수익 0, 비용 있음
+        self.assertTrue(tuning.check_cost())
+        self.assertEqual(config.operator_state()["loop_minutes"], 240)
+        self.days([10_000_000] + [10_200_000] * 10, cost_per_day=1.0)   # 20만원 > 비용 1.45만원 x 2
+        tuning.check_cost()
+        self.assertEqual(config.operator_state()["loop_minutes"], 120)
+
+    def test_propose_bounds_and_trial(self):
+        with self.assertRaises(tuning.TuneError):
+            tuning.propose("safety.max_drawdown_pct", 50, "안전장치는 조정 대상이 아니라는 테스트입니다")
+        with self.assertRaises(tuning.TuneError):
+            tuning.propose("limits.horizon_days_max", 30, "범위를 벗어나는 값으로 제안하는 테스트입니다")
+        self.days([10_000_000] + [10_100_000] * 10)               # 시험 전 10일 +1%
+        tuning.propose("limits.horizon_days_max", 7, "백테스트에서 5일 이상 보유 규칙이 꾸준히 좋았음 (테스트)")
+        self.assertEqual(config.load_config()["limits"]["horizon_days_max"], 7)
+        with self.assertRaises(tuning.TuneError):                 # 한 번에 하나
+            tuning.propose("policy.exploration.max_per_day", 2, "두 번째 제안은 시험 중이라 거부되어야 합니다")
+        rows = config.load_jsonl(self.d / "daily.jsonl")
+        rows += [{"date": f"2026-11-{i + 1:02d}", "equity": 10_100_000 - (i + 1) * 30_000, "cost_usd_total": 0,
+                  "kospi": 100} for i in range(10)]                # 시험 10일 -3%
+        config.dump_jsonl(self.d / "daily.jsonl", rows)
+        msgs = tuning.evaluate_trial()
+        self.assertIn("되돌림", msgs[0])
+        self.assertEqual(config.load_config()["limits"]["horizon_days_max"], 5)
 
 
 class TestGuard(unittest.TestCase):

@@ -26,6 +26,9 @@
   python tools.py disclosures [--code 005930]  # 최근 주요 공시 (DART)
   python tools.py disclosure --rcept 20261105000123 [--chars 6000]   # 공시 원문 읽기 (DART API)
   python tools.py discoveries                  # 엔진 자동 탐색 결과 (매일 장 마감 후)
+  python tools.py scorecard                    # 성적표: 수익원별 손익, 최근 5·10일 비용 후 수익, 청산 사유별 성적
+  python tools.py tune list                    # 자동 조정 상태 (방어 모드·비용 절감·시험 중인 설정)
+  python tools.py tune propose --param limits.horizon_days_max --value 7 --why "근거"   # 설정 변경 제안 (범위 내, 10거래일 시험)
 """
 import argparse
 import json
@@ -34,7 +37,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from phil import audit, dart, forecast, ledger, market, naver, policy, research, rules, score  # noqa: E402
+from phil import audit, dart, forecast, ledger, market, naver, policy, research, rules, score, tuning  # noqa: E402
 from phil.config import FORECASTS, LEDGER, load_config, load_jsonl  # noqa: E402
 
 
@@ -84,6 +87,12 @@ def main():
     sub.add_parser("features")
     sub.add_parser("audit")
     sub.add_parser("discoveries")
+    sub.add_parser("scorecard")
+    tn = sub.add_parser("tune")
+    tn.add_argument("action", choices=["list", "propose"])
+    tn.add_argument("--param")
+    tn.add_argument("--value", type=float)
+    tn.add_argument("--why", default="")
     bt = sub.add_parser("backtest")
     bt.add_argument("--spec", required=True)
     rl = sub.add_parser("rule")
@@ -166,6 +175,15 @@ def main():
                     fail("--id 와 --why 가 필요")
                 r = rules.retire(a.id, a.why)
                 out({"retired": r["id"], "name": r["name"]})
+        elif a.cmd == "scorecard":
+            out(score.scorecard())
+        elif a.cmd == "tune":
+            if a.action == "list":
+                out(tuning.summary())
+            else:
+                if not a.param or a.value is None:
+                    fail("--param 과 --value 가 필요")
+                print(tuning.propose(a.param, a.value, a.why))
         elif a.cmd == "discoveries":
             from phil import discover
             out(discover.last_report() or {"note": "아직 자동 탐색 결과 없음 (매일 16:10 이후 실행)"})
@@ -175,7 +193,7 @@ def main():
             out(dart.document_text(a.rcept, min(max(a.chars, 500), 20000)))
         elif a.cmd == "disclosures":
             out(dart.recent(a.code))
-    except (research.SpecError, rules.RuleError, dart.DartError) as err:
+    except (research.SpecError, rules.RuleError, dart.DartError, tuning.TuneError) as err:
         fail(err)
     except (ledger.Rejected, forecast.Rejected) as err:
         fail(err)

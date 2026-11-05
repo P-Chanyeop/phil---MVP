@@ -109,3 +109,48 @@ def claude_cost(cfg=None):
             today_usd += usd
     return {"total_usd": round(total, 2), "today_usd": round(today_usd, 2), "usd_krw": rate,
             "total_krw": round(total * rate), "today_krw": round(today_usd * rate)}
+
+
+def scorecard():
+    """사람 트레이더의 성적표: 수익원별 손익, 최근 흐름, 비용. 매 사이클 에이전트가 본다."""
+    from . import park, tuning
+    entries = load_jsonl(LEDGER)
+    closed = [e for e in entries if e["status"] == "closed"]
+
+    def bucket(rows):
+        n = len(rows)
+        pnl = sum(r["pnl_krw"] for r in rows)
+        wins = [r for r in rows if r["pnl_krw"] > 0]
+        losses = [r for r in rows if r["pnl_krw"] <= 0]
+        return {"n": n, "pnl_krw": pnl, "win_rate": round(len(wins) / n, 2) if n else None,
+                "avg_win_pct": round(sum(r["ret_pct"] for r in wins) / len(wins), 2) if wins else None,
+                "avg_loss_pct": round(sum(r["ret_pct"] for r in losses) / len(losses), 2) if losses else None}
+
+    src = {
+        "my_regular_buys": bucket([e for e in closed if e["edge_class"] != "rule" and not e.get("exploration")]),
+        "my_exploration_buys": bucket([e for e in closed if e.get("exploration")]),
+        "engine_rule_buys": bucket([e for e in closed if e["edge_class"] == "rule"]),
+    }
+    by_class = {}
+    for e in closed:
+        by_class.setdefault(e["edge_class"], []).append(e)
+    exits = {}
+    for e in closed:
+        k = (e.get("exit_reason") or "?").split(" ")[0]
+        exits.setdefault(k, []).append(e)
+    p = park.summary()
+    cost = claude_cost()
+    cycles = load_jsonl(CYCLES_LOG)[-20:]
+    paid = [c for c in cycles if c.get("cost_usd")]
+    return {
+        "question_to_ask_yourself": "지금 방식이 비용을 빼고 돈을 벌고 있나? 아니면 무엇을 바꿀 것인가?",
+        "last_5_days": tuning.window(5), "last_10_days": tuning.window(10),
+        "by_source": src,
+        "by_edge_class": {k: bucket(v) for k, v in by_class.items()},
+        "by_exit_reason": {k: bucket(v) for k, v in exits.items()},
+        "park_etf": {"value_krw": p["value_krw"], "pnl_krw": p["pnl_krw"]},
+        "claude_cost": cost,
+        "avg_cost_per_paid_cycle_usd": round(sum(c["cost_usd"] for c in paid) / len(paid), 2) if paid else None,
+        "cycles_last_20_with_no_buy_and_no_forecast": sum(1 for c in cycles if c.get("mode") and not c.get("new_bets")
+                                                           and not c.get("new_forecasts")),
+    }

@@ -89,6 +89,10 @@ def build_prompt(cycle_id, settled, mode, why_mode, events=None):
         "rules": [{k: r[k] for k in ("id", "name", "status", "forward", "live_trades")} for r in rules.summary()
                   if r["status"] in ("shadow", "live")],
     }
+    try:
+        ctx["scorecard"] = score.scorecard()
+    except Exception as e:  # noqa: BLE001
+        ctx["scorecard"] = {"error": str(e)[:200]}
     if events:
         ctx["event_disclosures"] = events
     if mode == "AUDIT":

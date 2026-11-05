@@ -133,5 +133,108 @@
     ]
   },
   "usd_krw": 1450,
-  "_comment_usd_krw": "Claude 비용(달러)을 원화로 바꿀 때 쓰는 환율. 대략값이면 충분."
+  "_comment_usd_krw": "Claude 비용(달러)을 원화로 바꿀 때 쓰는 환율. 대략값이면 충분.",
+  "defense": {
+    "_comment": "자동 방어 모드: 비용 차감 후 최근 10거래일 수익이 나쁘면 엔진이 단계적으로 보수적으로 바꾸고, 회복하면 되돌린다.",
+    "window_days": 10,
+    "enter_below_pct": -1.0,
+    "exit_above_pct": 0.5,
+    "levels": {
+      "1": {
+        "scale": {
+          "limits.max_position_pct": 0.5,
+          "policy.exploration.position_pct": 0.5,
+          "rules.live.position_pct": 0.5
+        },
+        "add": {
+          "policy.min_edge_vs_base_rate": 0.02
+        },
+        "set": {
+          "policy.exploration.max_per_day": 1
+        }
+      },
+      "2": {
+        "scale": {
+          "limits.max_position_pct": 0.3,
+          "policy.exploration.position_pct": 0.3,
+          "rules.live.position_pct": 0.3
+        },
+        "add": {
+          "policy.min_edge_vs_base_rate": 0.04
+        },
+        "set": {
+          "policy.exploration.max_per_day": 0
+        }
+      }
+    }
+  },
+  "cost_saver": {
+    "_comment": "최근 10거래일 Claude 비용이 비용 전 수익보다 크면 자동 반복을 4시간으로 늘림. 수익이 비용의 2배를 넘으면 원래 간격으로 복구.",
+    "window_days": 10,
+    "slow_minutes": 240,
+    "restore_ratio": 2.0
+  },
+  "tuning": {
+    "_comment": "Phil 이 제안할 수 있는 설정과 허용 범위. 시험 기간 후 성적이 나빠지면 자동으로 되돌림. 안전장치(손실 한도·실거래 등)는 대상 아님.",
+    "trial_days": 10,
+    "min_days_between": 5,
+    "revert_if_worse_by_pct": 0.5,
+    "params": {
+      "policy.min_edge_vs_base_rate": {
+        "min": 0.03,
+        "max": 0.1,
+        "label": "정규 매수 최소 엣지"
+      },
+      "policy.exploration.min_edge": {
+        "min": 0.01,
+        "max": 0.04,
+        "label": "탐색 매수 최소 엣지"
+      },
+      "policy.exploration.position_pct": {
+        "min": 0.02,
+        "max": 0.08,
+        "label": "탐색 매수 크기"
+      },
+      "policy.exploration.max_per_day": {
+        "min": 0,
+        "max": 5,
+        "label": "하루 탐색 매수 수",
+        "int": true
+      },
+      "limits.max_position_pct": {
+        "min": 0.05,
+        "max": 0.2,
+        "label": "정규 매수 최대 크기"
+      },
+      "limits.horizon_days_max": {
+        "min": 3,
+        "max": 10,
+        "label": "최대 보유 거래일",
+        "int": true
+      },
+      "limits.max_open_positions": {
+        "min": 5,
+        "max": 20,
+        "label": "동시 보유 종목 수",
+        "int": true
+      },
+      "rules.live.position_pct": {
+        "min": 0.03,
+        "max": 0.1,
+        "label": "규칙 매수 크기"
+      },
+      "universe.kospi_top": {
+        "min": 100,
+        "max": 300,
+        "label": "코스피 대상 종목 수",
+        "int": true
+      },
+      "universe.kosdaq_top": {
+        "min": 50,
+        "max": 200,
+        "label": "코스닥 대상 종목 수",
+        "int": true
+      }
+    }
+  }
 }

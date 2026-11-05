@@ -38,8 +38,50 @@ PROTECTED_PATHS = ["phil", "config", "agent", "web", "server.py", "tools.py", "r
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
-def load_config():
+TUNING = JOURNAL / "tuning.json"
+DAILY = JOURNAL / "daily.jsonl"
+
+
+def load_base_config():
+    """운영자가 정한 원래 설정 (config/protected.json)."""
     return json.loads(CONFIG.read_text(encoding="utf-8"))
+
+
+def _set_path(d, path, value):
+    keys = path.split(".")
+    for k in keys[:-1]:
+        d = d.setdefault(k, {})
+    d[keys[-1]] = value
+
+
+def _get_path(d, path, default=None):
+    for k in path.split("."):
+        if not isinstance(d, dict) or k not in d:
+            return default
+        d = d[k]
+    return d
+
+
+def load_config():
+    """원래 설정 + 자동 조정(journal/tuning.json: 시험 중·확정된 값, 방어 모드)."""
+    cfg = load_base_config()
+    t = load_json(TUNING, {})
+    for path, value in (t.get("overrides") or {}).items():
+        _set_path(cfg, path, value)
+    lvl = (t.get("defense") or {}).get("level", 0)
+    if lvl:
+        d = cfg.get("defense", {}).get("levels", {}).get(str(lvl), {})
+        for path, factor in (d.get("scale") or {}).items():
+            v = _get_path(cfg, path)
+            if isinstance(v, (int, float)):
+                _set_path(cfg, path, round(v * factor, 4))
+        for path, add in (d.get("add") or {}).items():
+            v = _get_path(cfg, path)
+            if isinstance(v, (int, float)):
+                _set_path(cfg, path, round(v + add, 4))
+        for path, value in (d.get("set") or {}).items():
+            _set_path(cfg, path, value)
+    return cfg
 
 
 def now_utc():
