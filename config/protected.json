@@ -14,7 +14,7 @@
     "min_price_krw": 1000
   },
   "limits": {
-    "max_position_pct": 0.1,
+    "max_position_pct": 0.2,
     "max_open_positions": 15,
     "max_new_positions_per_cycle": 5,
     "max_forecasts_per_cycle": 30,
@@ -46,7 +46,7 @@
     "exploration": {
       "_comment": "탐색 매수: 엣지가 min_edge 이상 ~ min_edge_vs_base_rate 미만인 후보를 작게 산다. 실제 매매 데이터를 쌓기 위한 것.",
       "min_edge": 0.02,
-      "position_pct": 0.02,
+      "position_pct": 0.05,
       "max_per_day": 3
     },
     "min_view_vs_base_rate": 0.02,
@@ -71,7 +71,7 @@
       "min_avg_net_pct": 0.1
     },
     "live": {
-      "position_pct": 0.03,
+      "position_pct": 0.08,
       "max_open_per_rule": 3,
       "max_live_rules": 5
     },
@@ -94,7 +94,7 @@
   },
   "safety": {
     "_comment": "자산이 최근 고점 대비 max_drawdown_pct 이상 빠지면 pause_days 거래일 동안 신규 매수 중단.",
-    "max_drawdown_pct": 5.0,
+    "max_drawdown_pct": 10.0,
     "pause_days": 2
   },
   "dart": {
@@ -117,6 +117,18 @@
       "수주",
       "특허",
       "임상"
+    ]
+  },
+  "park": {
+    "_comment": "놀고 있는 현금을 코스피200 ETF 에 넣어 둔다. 종목을 살 때 필요한 만큼 엔진이 팔아서 쓴다. ETF 는 증권거래세 면제.",
+    "code": "069500",
+    "name": "KODEX 200",
+    "cash_reserve_pct": 0.05,
+    "min_trade_pct": 0.03,
+    "rebalance_minutes": 60,
+    "window": [
+      "09:10",
+      "15:10"
     ]
   }
 }

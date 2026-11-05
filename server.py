@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import time
 
-from phil import cycle, dart, kis, ledger, market, naver, notify, policy, resolve, rules, safety, score, watch
+from phil import cycle, dart, kis, ledger, market, naver, notify, park, policy, resolve, rules, safety, score, watch
 from phil.config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, INTRADAY, LEDGER, RETROS, ROOT, STRATEGY, WATCH_EVENTS,
                          STRATEGY_HISTORY, load_config, load_env, load_jsonl,
                          operator_state, save_operator_state)
@@ -81,9 +81,16 @@ def live():
                     "entry_progress": max(0.0, min(1.0, (e["entry_price"] - lo) / (hi - lo))) if hi > lo else 0.5,
                     "horizon_days": e["horizon_days"], "exploration": e.get("exploration", False),
                     "edge_class": e["edge_class"]})
+    pk = cfg["park"]["code"]
+    pq = cached("q:" + pk, 5, lambda: naver.quote(pk, allow_etf=True))
+    if isinstance(pq, dict) and pq.get("price"):
+        prices[pk] = pq["price"]
     today = __import__("phil.config", fromlist=["now_kst"]).now_kst().date().isoformat()
     intraday = [r for r in load_jsonl(INTRADAY)[-500:] if r.get("date") == today]
-    return {"positions": pos, "equity_krw": ledger.equity(entries, cfg, prices),
+    psum = park.summary(prices.get(pk))
+    psum["day_change_pct"] = pq.get("change_pct") if isinstance(pq, dict) else None
+    return {"positions": pos, "park": psum, "cash_krw": ledger.cash(entries, cfg),
+            "equity_krw": ledger.equity(entries, cfg, prices),
             "start_krw": cfg["sim_bankroll_krw"], "intraday": intraday, "ts": time.time()}
 
 
@@ -132,6 +139,7 @@ def feed(limit=40):
                           "sub": ""})
     icons = {"kis": "🏦", "kis_error": "⚠️", "dart": "📢", "rule": "🤖", "safety": "⛔", "job": "🗂️",
              "job_error": "⚠️"}
+    icons["park"] = "💤"
     for w in load_jsonl(WATCH_EVENTS)[-150:]:
         if w.get("kind") in icons:
             items.append({"ts": w["ts"], "icon": icons[w["kind"]], "text": w["msg"], "sub": ""})
@@ -346,6 +354,8 @@ class H(BaseHTTPRequestHandler):
                 st = operator_state()
                 if "auto_loop" in body:
                     st["auto_loop"] = bool(body["auto_loop"])
+                if "park_enabled" in body:
+                    st["park_enabled"] = bool(body["park_enabled"])
                 if body.get("resume_buys"):
                     safety.resume()
                 if "kis_enabled" in body:

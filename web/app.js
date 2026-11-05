@@ -55,8 +55,9 @@ function closedItem(e) {
 async function loadHome() {
   try { S = await api("/api/state"); } catch (e) { $("#runPill").textContent = "서버 연결 끊김"; return; }
   const sc = S.score, t = sc.trades, cal = sc.calibration;
-  if (!(LIVE && LIVE.positions.length)) $("#equity").textContent = won(sc.equity_krw);
-  if (!(LIVE && LIVE.positions.length)) $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> · 시작 ${won(sc.bankroll_start_krw)}` + (sc.kospi_return_pct != null ? ` · 같은 기간 코스피 <span class="${ud(sc.kospi_return_pct)}">${sp(sc.kospi_return_pct)}</span>` : "");
+  const liveOn = LIVE && (LIVE.positions.length || (LIVE.park || {}).qty);
+  if (!liveOn) $("#equity").textContent = won(sc.equity_krw);
+  if (!liveOn) $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> · 시작 ${won(sc.bankroll_start_krw)}` + (sc.kospi_return_pct != null ? ` · 같은 기간 코스피 <span class="${ud(sc.kospi_return_pct)}">${sp(sc.kospi_return_pct)}</span>` : "");
   $("#sKospi").textContent = sc.alpha_pct == null ? "—" : sp(sc.alpha_pct);
   $("#sKospi").className = ud(sc.alpha_pct);
   $("#sWin").textContent = t.n ? pct(t.win_rate) : "—";
@@ -223,6 +224,7 @@ $("#btnTgTest").onclick = async () => { try { await api("/api/notify/test", {});
 
 async function loadSettings() {
   loadNotify();
+  $("#parkToggle").checked = S?.operator?.park_enabled !== false;
   const d = S?.dart || {};
   $("#dartInfo").innerHTML = d.key_set
     ? `<b>켜짐</b> · 장중 3분마다 300종목의 주요 공시(수주·자사주·실적·증자 등)를 확인하고, 뜨면 사이클을 바로 깨워요 (자동 반복이 켜져 있을 때, 하루 최대 4번).<br>마지막 확인 ${ago(d.last_poll) || "—"}${d.error ? ` · <span class="neg">${esc(d.error)}</span>` : ""}`
@@ -285,9 +287,13 @@ function liveItem(o) {
 async function loadLive() {
   try { LIVE = await api("/api/live"); } catch { return; }
   if (LIVE.positions.some((o) => !POS.find((x) => x.id === o.id))) loadPositions();
-  $("#openList").innerHTML = LIVE.positions.map(liveItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
-  $("#liveTs").textContent = LIVE.positions.length ? "실시간 · " + new Date(LIVE.ts * 1000).toLocaleTimeString("ko-KR") : "";
-  if (LIVE.positions.length) {
+  const pk = LIVE.park || {};
+  const parkHtml = pk.qty ? `<div class="pos-live"><div class="pos-head"><div><span class="pos-name">💤 ${esc(pk.name)}</span> <span class="chip gray">대기 자금</span>
+      <div class="sub">${pk.qty.toLocaleString()}주 · 남는 현금을 코스피200 에 넣어 둠 · 종목 살 때 필요한 만큼 팔아서 씀</div></div>
+      <div style="text-align:right"><div class="pos-price">${won(pk.value_krw)}</div><div class="pos-pnl ${ud(pk.pnl_krw)}">${won(pk.pnl_krw, 1)}${pk.day_change_pct != null ? ` · 오늘 ${sp(pk.day_change_pct)}` : ""}</div></div></div></div>` : "";
+  $("#openList").innerHTML = (LIVE.positions.map(liveItem).join("") + parkHtml) || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
+  $("#liveTs").textContent = (LIVE.positions.length || pk.qty ? "실시간 · " + new Date(LIVE.ts * 1000).toLocaleTimeString("ko-KR") : "") + ` · 현금 ${won(LIVE.cash_krw)}`;
+  if (LIVE.positions.length || pk.qty) {
     $("#equity").textContent = won(LIVE.equity_krw);
     const r = (LIVE.equity_krw / LIVE.start_krw - 1) * 100;
     $("#pnl").innerHTML = `<span class="${ud(r)}">${sp(r)}</span> · 시작 ${won(LIVE.start_krw)} · 실시간`;
@@ -322,3 +328,5 @@ $("#btnKis").onclick = async () => {
 };
 
 $("#btnResume").onclick = async () => { if (!confirm("안전장치를 해제하고 신규 매수를 다시 허용할까요?")) return; await api("/api/operator", {resume_buys: true}); toast("신규 매수를 다시 허용했어요"); refresh(); };
+
+$("#parkToggle").onchange = async (e) => { await api("/api/operator", {park_enabled: e.target.checked}); toast(e.target.checked ? "남는 현금을 코스피200 ETF 에 넣어 둘게요" : "다음 장중에 ETF 를 팔아 현금으로 돌릴게요"); refresh(); };

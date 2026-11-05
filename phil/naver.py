@@ -57,10 +57,10 @@ def signed_pct(ratio, compare=None):
     return v
 
 
-def quote(code):
+def quote(code, allow_etf=False):
     """현재가(장중) 또는 종가."""
     d = _get(f"{M}/stock/{code}/basic")
-    if d.get("stockEndType") != "stock":
+    if d.get("stockEndType") != "stock" and not (allow_etf and d.get("stockEndType") == "etf"):
         raise DataError(f"{code} 는 주식이 아님 ({d.get('stockEndType')})")
     return {
         "code": code,

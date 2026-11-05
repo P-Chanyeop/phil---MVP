@@ -10,7 +10,7 @@ import threading
 import time
 import traceback
 
-from . import dart, kis, ledger, naver, notify, research, rules, safety
+from . import dart, kis, ledger, naver, notify, park, research, rules, safety
 from .config import (INTRADAY, KIS_LEDGER, WATCH_EVENTS, append_jsonl, iso, load_config,
                      load_jsonl, now_kst, operator_state)
 from .market import kst_date
@@ -76,6 +76,26 @@ def check_positions(now):
                 event("close", f"{c['name']} {reason} {c['ret_pct']:+.2f}% ({c['pnl_krw']:+,}원)",
                       position_id=c["id"])
     return prices
+
+
+def manage_park(now, prices):
+    """대기 자금: 시세 반영, 남는 현금 투입, 꺼졌으면 전부 매도."""
+    code = load_config()["park"]["code"]
+    try:
+        p = naver.quote(code, allow_etf=True)["price"]
+    except naver.DataError:
+        return
+    prices[code] = p
+    park.mark(p)
+    if not park.enabled():
+        r = park.withdraw_all()
+        if r:
+            event("park", f"💤 대기 자금 회수: ETF {r['qty']}주 매도 ({r['amount']:,}원)")
+        return
+    entries = ledger.read_ledger()
+    r = park.rebalance(ledger.cash(entries), ledger.equity(entries, prices=prices), now)
+    if r:
+        event("park", f"💤 남는 현금 {r['amount']:,}원 → 코스피200 ETF {r['qty']}주")
 
 
 def snapshot_equity(now, prices):
@@ -231,6 +251,7 @@ def tick():
         STATUS["last_error"] = f"scheduled: {e}"
     if _market_open(now):
         prices = check_positions(now)
+        manage_park(now, prices)
         snapshot_equity(now, prices)
         sync_kis(now)
     else:

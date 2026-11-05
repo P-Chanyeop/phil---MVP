@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from phil import (config, dart, forecast, guard, kis, ledger, market, notify, policy, research,  # noqa: E402
+from phil import (config, dart, forecast, guard, kis, ledger, market, notify, park, policy, research,  # noqa: E402
                   resolve, rules, safety, score, watch)
 
 KST = config.KST
@@ -36,7 +36,8 @@ class Tmp(unittest.TestCase):
                              (config, "LOCK_FILE", ".lock"), (notify, "LEDGER", "l.jsonl"),
                              (notify, "FORECASTS", "f.jsonl"), (notify, "NOTIFY_STATE", "n.json"),
                              (rules, "RULES", "rules.json"), (rules, "RULE_SIGNALS", "sig.jsonl"),
-                             (safety, "META", "m.json"), (dart, "DISCLOSURES", "d.jsonl")]:
+                             (safety, "META", "m.json"), (dart, "DISCLOSURES", "d.jsonl"),
+                             (park, "PARK", "park.json")]:
             mock.patch.object(mod, name, self.d / f).start()
         mock.patch("phil.market.universe", lambda refresh=False: {
             "005930": {"name": "삼성전자", "market": "KOSPI", "price": 100}}).start()
@@ -83,7 +84,7 @@ class TestBuy(Tmp):
     def test_buy_ok_and_sizing(self):
         e = self.buy()
         self.assertAlmostEqual(e["base_rate"], 0.5, delta=0.01)
-        self.assertLessEqual(e["cost_krw"], 1_000_000)   # 자산의 10%
+        self.assertLessEqual(e["cost_krw"], 2_000_000)   # 자산의 20%
         self.assertEqual(e["stop_price"], 96.0)
         self.assertEqual(e["target_price"], 106.0)
         with self.assertRaises(ledger.Rejected):  # 중복 보유
@@ -96,7 +97,7 @@ class TestBuy(Tmp):
     def test_exploration_buy_small_and_capped(self):
         e = self.buy(est=0.54)          # 엣지 ≈ 0.0375: 정규(0.05) 미만, 탐색(0.02) 이상
         self.assertTrue(e["exploration"])
-        self.assertLessEqual(e["cost_krw"], 200_000)   # 자산의 2%
+        self.assertLessEqual(e["cost_krw"], 500_000)   # 자산의 5%
         codes = ["000660", "035420", "051910"]
         uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ["005930"] + codes}
         with mock.patch("phil.market.universe", lambda refresh=False: uni):
@@ -106,7 +107,7 @@ class TestBuy(Tmp):
                 self.buy(est=0.54, code="051910")
             big = self.buy(est=0.62, code="051910")    # 정규 매수는 한도와 무관
         self.assertFalse(big["exploration"])
-        self.assertGreater(big["cost_krw"], 500_000)
+        self.assertGreater(big["cost_krw"], 1_000_000)
 
     def test_limits(self):
         for kw in ({"horizon_days": 6}, {"stop_pct": 0.01}, {"stop_pct": 0.2},
@@ -353,15 +354,15 @@ class TestRules(Tmp):
                 "backtest": {"test": {"n": 40, "avg_net_pct": 0.6, "up_rate": 0.6}}}
         e = ledger.rule_buy(rule, "005930", "삼성전자", 100.0, bars("2025-01-01", [100, 101] * 100))
         self.assertEqual((e["edge_class"], e["rule_id"], e["horizon_days"]), ("rule", "r1", 2))
-        self.assertLessEqual(e["cost_krw"], 300_000)   # 자산의 3%
+        self.assertLessEqual(e["cost_krw"], 800_000)   # 자산의 8%
 
 
 class TestSafety(Tmp):
     def test_drawdown_pause_and_resume(self):
         now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)   # 월요일
         self.assertIsNone(safety.check(10_000_000, now))
-        self.assertIsNone(safety.check(9_600_000, now))      # -4%
-        msg = safety.check(9_480_000, now)                   # -5.2%
+        self.assertIsNone(safety.check(9_200_000, now))      # -8%
+        msg = safety.check(8_950_000, now)                   # -10.5%
         self.assertIn("중단", msg)
         self.assertTrue(safety.paused(now)[0])
         self.assertFalse(safety.paused(dt.datetime(2026, 11, 5, 10, 0, tzinfo=KST))[0])   # 2거래일 뒤 풀림
@@ -415,6 +416,29 @@ class TestImprovements(Tmp):
         near_base = dict(ok, baseline_test={"avg_net_pct": 0.6})
         self.assertFalse(discover.strict_pass(near_base, cfg))   # 기준선과 0.3%p 미만 차이
         self.assertGreater(len(list(discover.candidates())), 300)
+
+
+class TestPark(Tmp):
+    def setUp(self):
+        super().setUp()
+        self.etf = 100.0
+        mock.patch("phil.park._price", lambda: self.etf).start()
+        mock.patch("phil.park.enabled", lambda: True).start()
+
+    def test_park_idle_cash_and_fund_buys(self):
+        now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)
+        r = park.rebalance(ledger.cash([]), ledger.equity([]), now)
+        self.assertGreater(r["qty"], 90_000)                     # 1,000만 중 95% 투입
+        self.assertLess(ledger.cash([]), 600_000)
+        eq0 = ledger.equity([])
+        self.assertAlmostEqual(eq0, 10_000_000, delta=20_000)    # 비용만큼만 줄어듦
+        self.assertIsNone(park.rebalance(ledger.cash([]), eq0, now))   # 한 시간 안엔 다시 안 함
+        e = ledger.buy("005930", 0.62, 3, 0.04, None, "earnings", "대기 자금에서 꺼내 쓰는 매수 테스트")
+        self.assertGreater(e["cost_krw"], 1_500_000)             # 현금이 모자라도 ETF 를 팔아 매수
+        self.assertGreaterEqual(ledger.cash(ledger.read_ledger()), 0)
+        self.etf = 110.0                                         # 시장 +10% → 대기 자금도 오름
+        park.mark(110.0)                                         # (감시 루프가 1분마다 시세 반영)
+        self.assertGreater(ledger.equity(ledger.read_ledger()), eq0 + 500_000)
 
 
 class TestGuard(unittest.TestCase):

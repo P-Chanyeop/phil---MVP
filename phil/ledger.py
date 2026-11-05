@@ -11,7 +11,7 @@ import math
 import os
 import uuid
 
-from . import market, naver, policy, safety
+from . import market, naver, park, policy, safety
 from .config import LEDGER, append_jsonl, dump_jsonl, iso, ledger_lock, load_config, load_jsonl
 
 
@@ -42,14 +42,27 @@ def cash(entries, cfg=None):
         c -= e["cost_krw"]
         if e["status"] == "closed":
             c += e["proceeds_krw"]
-    return c
+    return c - park.net_out()   # 대기 자금(ETF)에 넣어 둔 만큼 현금에서 빠짐
+
+
+def buying_power(entries=None, cfg=None):
+    """현금 + 대기 자금(ETF, 팔면 바로 현금)."""
+    entries = entries if entries is not None else read_ledger()
+    return cash(entries, cfg) + park.value()
+
+
+def _ensure_cash(cost, entries, cfg):
+    """현금이 모자라면 대기 자금(ETF)을 팔아서 마련 (네트워크 — 잠금 밖에서 호출)."""
+    short = cost - cash(entries, cfg)
+    if short > 0:
+        park.raise_cash(short)
 
 
 def equity(entries=None, cfg=None, prices=None):
     """현금 + 보유 종목 평가액(현재가 기준, 매도비용 차감)."""
     cfg = cfg or load_config()
     entries = entries if entries is not None else read_ledger()
-    total = cash(entries, cfg)
+    total = cash(entries, cfg) + park.value((prices or {}).get(cfg.get("park", {}).get("code")))
     for e in entries:
         if e["status"] == "open":
             p = (prices or {}).get(e["code"]) or e.get("last_price") or e["entry_price"]
@@ -121,7 +134,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
 
     eq = equity(entries, cfg)
     max_amt = eq * (exp["position_pct"] if exploration else lim["max_position_pct"])
-    amount = min(amount_krw or max_amt, max_amt, cash(entries, cfg))
+    amount = min(amount_krw or max_amt, max_amt, buying_power(entries, cfg))
     price = q["price"]
     qty = math.floor(amount / (price * (1 + costs["slippage"]) * (1 + costs["commission"])))
     if qty < 1:
@@ -140,6 +153,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "strategy_rev": strategy_rev(),
         "status": "open", "last_price": price,
     }
+    _ensure_cash(e["cost_krw"], read_ledger(), cfg)
     _commit(e, lim, cfg)
     return e
 
@@ -167,7 +181,7 @@ def rule_buy(rule, code, name, price, bars):
     if sum(1 for e in entries if e["status"] == "open" and e.get("rule_id") == rule["id"]) >= rc["max_open_per_rule"]:
         raise Rejected("이 규칙의 동시 보유 한도")
     spec = rule["spec"]
-    amount = min(equity(entries, cfg) * rc["position_pct"], cash(entries, cfg))
+    amount = min(equity(entries, cfg) * rc["position_pct"], buying_power(entries, cfg))
     qty = math.floor(amount / (price * (1 + costs["slippage"]) * (1 + costs["commission"])))
     if qty < 1:
         raise Rejected("1주도 살 수 없는 금액")
@@ -187,6 +201,7 @@ def rule_buy(rule, code, name, price, bars):
         "rationale": f"규칙 '{rule['name']}' — 백테스트 검증 {bt.get('n')}건 평균 {bt.get('avg_net_pct')}%",
         "strategy_rev": strategy_rev(), "status": "open", "last_price": price,
     }
+    _ensure_cash(e["cost_krw"], read_ledger(), cfg)
     _commit(e, lim, cfg)
     return e
 
@@ -251,6 +266,8 @@ def status(refresh_prices=True):
     closed = [e for e in entries if e["status"] == "closed"]
     return {
         "cash_krw": cash(entries, cfg),
+        "park": park.summary(),
+        "buying_power_krw": buying_power(entries, cfg),
         "equity_krw": equity(entries, cfg, prices),
         "bankroll_start_krw": cfg["sim_bankroll_krw"],
         "open_positions": len(open_pos),
