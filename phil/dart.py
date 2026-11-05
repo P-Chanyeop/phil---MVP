@@ -2,14 +2,19 @@
 
 .env 의 PHIL_DART_API_KEY (opendart.fss.or.kr 무료 발급)가 있을 때만 동작.
 """
+import html
+import io
 import json
+import re
 import urllib.parse
 import urllib.request
+import zipfile
 
 from . import market
 from .config import DISCLOSURES, append_jsonl, iso, load_config, load_env, load_jsonl, now_kst
 
 API = "https://opendart.fss.or.kr/api/list.json"
+DOC_API = "https://opendart.fss.or.kr/api/document.xml"
 STATUS = {"last_poll": None, "error": None}
 
 
@@ -75,3 +80,47 @@ def recent(code=None, n=30):
     if code:
         rows = [r for r in rows if r["code"] == code]
     return rows[-n:][::-1]
+
+
+def _xml_to_text(raw):
+    t = raw.decode("utf-8", errors="replace")
+    t = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", t)
+    t = re.sub(r"(?i)<(br|p|tr|title|td|th|li|div)[^>]*>", "\n", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = html.unescape(t)
+    t = re.sub(r"[ \t\u00a0]+", " ", t)
+    t = re.sub(r"\n\s*\n+", "\n", t)
+    return t.strip()
+
+
+def document_text(rcept_no, max_chars=6000):
+    """공시 원문 (DART 공식 API: 원본 XML 이 든 ZIP). 웹페이지는 자바스크립트라 직접 못 읽으므로 이걸 쓴다."""
+    from .config import JOURNAL
+    if not re.fullmatch(r"\d{14}", str(rcept_no)):
+        raise DartError("접수번호(rcept_no)는 숫자 14자리")
+    cache = JOURNAL / "dart-docs" / f"{rcept_no}.txt"
+    if cache.exists():
+        text = cache.read_text(encoding="utf-8")
+    else:
+        k = key()
+        if not k:
+            raise DartError(".env 에 PHIL_DART_API_KEY 가 없습니다")
+        url = DOC_API + "?" + urllib.parse.urlencode({"crtfc_key": k, "rcept_no": rcept_no})
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                body = r.read()
+        except Exception as e:  # noqa: BLE001
+            raise DartError(f"DART 연결 실패: {str(e).replace(k, '***')[:150]}") from None
+        if body[:2] != b"PK":   # 오류는 XML 로 온다
+            m = re.search(rb"<message>(.*?)</message>", body)
+            raise DartError("DART 원문 오류: " + (m.group(1).decode("utf-8", "replace") if m else body[:150].decode("utf-8", "replace")))
+        parts = []
+        with zipfile.ZipFile(io.BytesIO(body)) as z:
+            for name in sorted(z.namelist(), key=lambda n: z.getinfo(n).file_size, reverse=True)[:3]:
+                parts.append(_xml_to_text(z.read(name)))
+        text = "\n\n".join(p for p in parts if p)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(text, encoding="utf-8")
+    return {"rcept_no": rcept_no, "chars": len(text), "truncated": len(text) > max_chars,
+            "text": text[:max_chars],
+            "url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"}

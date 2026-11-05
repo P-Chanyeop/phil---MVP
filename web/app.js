@@ -89,7 +89,7 @@ async function loadHome() {
   let sub = `${S.cycles_run}번째 하루를 지났어요.`;
   if (lc) sub += ` 마지막: ${ago(lc.finished)} · 매수 ${lc.new_bets?.length ?? 0}건 · 예측 ${lc.new_forecasts ?? 0}건` + (lc.summary?.note ? ` — ${lc.summary.note}` : lc.error ? ` — ⚠️ ${lc.error}` : "");
   if (S.watch && S.watch.watching) sub += ` · 실시간 감시 ${S.watch.watching}종목`;
-  if (S.operator.auto_loop) sub += S.next_auto_run ? ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후` : " · 자동 반복: 장중과 장 마감 후(15:45)에 실행";
+  if (S.operator.auto_loop) sub += S.next_auto_run ? ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후` : ` · 자동 반복: 장중 + 장 마감 후(${S.post_close_time || "16:30"} 연구) + 토요일 감사`;
   $("#cycleSub").textContent = sub;
   if (!LIVE) $("#openList").innerHTML = (S.status.open || []).map(openItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
   if (run || logFollow) loadLog();
@@ -244,7 +244,7 @@ async function loadSettings() {
   } catch (e) { $("#kisInfo").textContent = "확인 실패: " + e.message; }
   const w = await api("/api/watch").catch(() => []);
   $("#watchSub").textContent = `장중 1분마다 보유 종목의 손절·목표가·만기를 확인해요 (Claude 비용 없음). 마지막 확인 ${ago(S?.watch?.last_tick) || "—"}` + (S?.watch?.last_error ? ` · ⚠️ ${S.watch.last_error}` : "");
-  $("#watchList").innerHTML = w.slice(0, 15).map((x) => `<div class="item"><div class="q">${x.kind === "close" ? "🔔" : x.kind === "kis" ? "🏦" : "⚠️"} ${esc(x.msg)}</div><div class="meta"><span>${ago(x.ts)}</span></div></div>`).join("") || `<div class="empty">아직 감시 이벤트가 없어요.</div>`;
+  $("#watchList").innerHTML = w.slice(0, 15).map((x) => `<div class="item"><div class="q">${({close: "🔔", kis: "🏦", dart: "📢", rule: "🤖", park: "💤", job: "🗂️", safety: "⛔"})[x.kind] || "⚠️"} ${esc(x.msg)}</div><div class="meta"><span>${ago(x.ts)}</span></div></div>`).join("") || `<div class="empty">아직 감시 이벤트가 없어요.</div>`;
   const cycles = await api("/api/cycles");
   $("#cycleList").innerHTML = cycles.map((c) => `<div class="item" data-log="${esc(c.cycle_id)}"><div class="q">${c.ok ? (c.mode ? "✅" : "😴") : "⚠️"} ${esc(c.summary?.note || c.error || "사이클 " + c.cycle_id)}</div>
     <div class="meta"><span>${ago(c.finished)}</span>${c.mode ? `<span>${c.mode === "FULL" ? "장중" : "회고"}</span>` : ""}<span>청산 ${c.settled ?? 0}</span><span>매수 ${c.new_bets?.length ?? 0}</span><span>예측 ${c.new_forecasts ?? 0}</span>${c.cost_usd ? `<span>$${(+c.cost_usd).toFixed(2)}</span>` : ""}${c.reverted ? '<span class="chip bad">보호파일 복구</span>' : ""}</div></div>`).join("") || `<div class="empty">아직 실행한 사이클이 없어요.</div>`;

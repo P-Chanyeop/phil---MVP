@@ -186,6 +186,7 @@ def state():
         "kis": {"configured": kis.configured(), "enabled": operator_state().get("kis_enabled", False)},
         "auth": "api_key" if (load_env().get("ANTHROPIC_API_KEY") or __import__("os").environ.get("ANTHROPIC_API_KEY")) else "login",
         "model": load_config()["cycle"].get("model") or "Claude Code 기본값",
+        "post_close_time": load_config()["cycle"].get("post_close_time", "16:30"),
     }
 
 

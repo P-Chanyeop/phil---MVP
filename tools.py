@@ -24,6 +24,7 @@
   python tools.py rule retire --id <규칙id> --why "이유"
   python tools.py audit                        # 주간 감사 자료 (전략 버전별 성적, 수정 내역)
   python tools.py disclosures [--code 005930]  # 최근 주요 공시 (DART)
+  python tools.py disclosure --rcept 20261105000123 [--chars 6000]   # 공시 원문 읽기 (DART API)
   python tools.py discoveries                  # 엔진 자동 탐색 결과 (매일 장 마감 후)
 """
 import argparse
@@ -91,6 +92,9 @@ def main():
     rl.add_argument("--spec")
     rl.add_argument("--why", default="")
     rl.add_argument("--id")
+    dd = sub.add_parser("disclosure")
+    dd.add_argument("--rcept", required=True)
+    dd.add_argument("--chars", type=int, default=6000)
     ds = sub.add_parser("disclosures")
     ds.add_argument("--code")
     se = sub.add_parser("sell")
@@ -167,9 +171,11 @@ def main():
             out(discover.last_report() or {"note": "아직 자동 탐색 결과 없음 (매일 16:10 이후 실행)"})
         elif a.cmd == "audit":
             out(audit.report())
+        elif a.cmd == "disclosure":
+            out(dart.document_text(a.rcept, min(max(a.chars, 500), 20000)))
         elif a.cmd == "disclosures":
             out(dart.recent(a.code))
-    except (research.SpecError, rules.RuleError) as err:
+    except (research.SpecError, rules.RuleError, dart.DartError) as err:
         fail(err)
     except (ledger.Rejected, forecast.Rejected) as err:
         fail(err)

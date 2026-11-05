@@ -384,6 +384,42 @@ class TestDart(Tmp):
         self.assertEqual(again, [])
 
 
+class TestDartDocument(Tmp):
+    def _resp(self, body):
+        class R:
+            def __init__(self, b): self.b = b
+            def read(self): return self.b
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return lambda url, timeout=None: R(body)
+
+    def test_reads_zip_and_strips_tags(self):
+        import io as _io
+        import zipfile as _zf
+        buf = _io.BytesIO()
+        with _zf.ZipFile(buf, "w") as z:
+            z.writestr("20261105000123.xml", "<DOCUMENT><TITLE>단일판매ㆍ공급계약체결</TITLE><P>계약금액 1,234억원</P>"
+                                               "<TD>최근 매출액 대비 15.2%</TD><STYLE>x{}</STYLE></DOCUMENT>".encode())
+        with mock.patch("phil.dart.key", lambda: "k"), mock.patch("phil.dart.JOURNAL", self.d, create=True), \
+                mock.patch("phil.config.JOURNAL", self.d), \
+                mock.patch("urllib.request.urlopen", self._resp(buf.getvalue())):
+            r = dart.document_text("20261105000123")
+        self.assertIn("계약금액 1,234억원", r["text"])
+        self.assertIn("15.2%", r["text"])
+        self.assertNotIn("<", r["text"])
+        self.assertNotIn("x{}", r["text"])
+
+    def test_error_message(self):
+        body = "<result><status>014</status><message>파일이 존재하지 않습니다.</message></result>".encode()
+        with mock.patch("phil.dart.key", lambda: "k"), mock.patch("phil.config.JOURNAL", self.d), \
+                mock.patch("urllib.request.urlopen", self._resp(body)):
+            with self.assertRaises(dart.DartError) as cm:
+                dart.document_text("20261105000999")
+        self.assertIn("파일이 존재하지 않습니다", str(cm.exception))
+        with self.assertRaises(dart.DartError):
+            dart.document_text("123")
+
+
 class TestImprovements(Tmp):
     def test_forecast_without_view_rejected(self):
         with self.assertRaises(forecast.Rejected):
