@@ -57,8 +57,8 @@ function drawChart({ phil, kospi, labels, baseLabel, xFirst, xLast, note }) {
   if (yk != null && Math.abs(yp - yk) < 12) { const m = (yp + yk) / 2, up = pe >= ke; yp = m + (up ? -6 : 6); yk = m + (up ? 6 : -6); }
   $("#chartEnds").innerHTML = `<span class="ph" style="top:${yp}%">Phil ${sp(pe)}</span>` + (yk != null ? `<span class="kp" style="top:${yk}%">코스피 ${sp(ke)}</span>` : "");
   $("#chartX").innerHTML = `<span>${esc(xFirst || "")}</span><span>${esc(xLast || "")}</span>`;
-  $("#chartLegend").innerHTML = `<span><i></i>Phil 자산</span>` + (kospi ? `<span><i class="kp"></i>같은 돈을 코스피에 넣었다면</span>` : "") + `<span><i class="base"></i>0% = ${esc(baseLabel)}</span>`;
-  $("#chartNote").innerHTML = note || "";
+  $("#chartLegend").innerHTML = `<span><i></i>Phil 자산</span>` + (kospi ? `<span><i class="kp"></i>시장 평균 (코스피)</span>` : "") + `<span><i class="base"></i>0% = ${esc(baseLabel)}</span>`;
+  $("#chartNote").innerHTML = (note || "") + (kospi ? `<span class="chart-def">코스피는 삼성전자·SK하이닉스 같은 국내 대형주 전체의 평균 주가 지수입니다. 점선은 종목을 고르지 않고 같은 돈으로 시장 평균만 따라갔을 때의 결과(KODEX 200 같은 ETF를 샀을 때와 거의 같음)이고, Phil 이 종목을 고르는 의미가 있으려면 이 선보다 위에 있어야 합니다.</span>` : "");
   CHART = { phil, kospi, labels, n };
 }
 (() => {
@@ -155,7 +155,7 @@ async function loadHome() {
   if (!liveOn) $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> 시작 ${won(sc.bankroll_start_krw)}`;
   $("#sKospi").textContent = sc.alpha_pct == null ? "—" : sp(sc.alpha_pct);
   $("#sKospi").className = ud(sc.alpha_pct);
-  $("#sKospiSub").textContent = sc.kospi_return_pct != null ? `코스피 ${sp(sc.kospi_return_pct)} 대비` : "같은 기간 초과수익";
+  $("#sKospiSub").textContent = sc.kospi_return_pct != null ? `시장 평균(코스피) ${sp(sc.kospi_return_pct)} 대비` : "같은 기간 초과수익";
   $("#sNet").textContent = sp(sc.return_after_cost_pct); $("#sNet").className = ud(sc.return_after_cost_pct);
   const cc0 = sc.claude_cost || {};
   $("#sNetSub").textContent = cc0.subscription && !cc0.billed_usd ? `구독이라 청구 없음 (환산 $${(cc0.total_usd || 0).toFixed(2)})` : cc0.billed_usd != null ? `Claude 청구 $${cc0.billed_usd.toFixed(2)}` : "";

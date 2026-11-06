@@ -202,3 +202,5 @@ details summary{cursor:pointer;font-weight:600;font-size:13px;color:var(--phil)}
   .bottom button.active{color:var(--phil)}
   .sheet-body{max-width:100%}
 }
+
+.chart-def{display:block;margin-top:6px;color:var(--muted)}
