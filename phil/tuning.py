@@ -45,7 +45,8 @@ def record_daily(now=None):
     except Exception:  # noqa: BLE001
         kospi = None
     from . import park
-    row = {"date": day, "equity": ledger.equity(), "cost_usd_total": score.claude_cost()["total_usd"],
+    cc = score.claude_cost()
+    row = {"date": day, "equity": ledger.equity(), "cost_usd_total": cc["total_usd"], "billed_usd_total": cc["billed_usd"],
            "kospi": kospi, "park_total_pnl": park.summary().get("total_pnl_krw", 0)}
     append_jsonl(DAILY, row)
     return row
@@ -71,7 +72,12 @@ def window(days, end_index=None, min_days=MIN_WINDOW_DAYS):
     ex = "park_total_pnl" in a and "park_total_pnl" in b
     ea, eb = (a["equity"] - a["park_total_pnl"], b["equity"] - b["park_total_pnl"]) if ex else (a["equity"], b["equity"])
     pnl = eb - ea
-    cost = (b["cost_usd_total"] - a["cost_usd_total"]) * rate
+    if "billed_usd_total" in a and "billed_usd_total" in b:   # 실제 청구분만 (구독 로그인은 0)
+        cost = (b["billed_usd_total"] - a["billed_usd_total"]) * rate
+    elif __import__("phil.score", fromlist=["claude_cost"]).claude_cost()["subscription"]:   # 옛 기록 + 지금 구독 로그인 → 청구 없음
+        cost = 0
+    else:
+        cost = (b["cost_usd_total"] - a["cost_usd_total"]) * rate
     return {"from": a["date"], "to": b["date"], "days": span, "partial": partial, "ex_park": ex,
             "pnl_krw": round(pnl), "cost_krw": round(cost),
             "after_cost_pct": round((pnl - cost) / ea * 100, 3)}

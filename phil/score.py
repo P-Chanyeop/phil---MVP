@@ -54,7 +54,7 @@ def report(kospi_now=None):
     my_ret = round((eq_now / start - 1) * 100, 2)
     fc = load_jsonl(FORECASTS)
     cost = claude_cost(cfg)
-    net_after = eq_now - cost["total_krw"]
+    net_after = eq_now - cost["billed_krw"]
     return {
         "claude_cost": cost,
         "return_after_cost_pct": round((net_after / start - 1) * 100, 2),
@@ -94,10 +94,12 @@ def breakdown(prices=None):
         unreal += sell_proceeds(p, e["qty"], cfg["costs"])[1] - e["cost_krw"]
     pk = park.summary((prices or {}).get(cfg["park"]["code"]))
     park_pnl = pk.get("total_pnl_krw", 0)
-    cost = claude_cost(cfg)["total_krw"]
+    cc = claude_cost(cfg)
+    cost = cc["billed_krw"]
     pre = realized + unreal + park_pnl
     return {"stock_realized_krw": realized, "stock_unrealized_krw": unreal, "stock_total_krw": realized + unreal,
             "park_krw": park_pnl, "pre_cost_krw": pre, "claude_cost_krw": cost, "net_krw": pre - cost,
+            "claude_usage_usd": cc["total_usd"], "claude_subscription": cc["subscription"],
             "closed_n": len(closed), "open_n": len(opens), "park_value_krw": pk.get("value_krw", 0)}
 
 
@@ -119,19 +121,33 @@ def verified_edge_classes(by_class=None):
 
 
 def claude_cost(cfg=None):
-    """사이클 기록의 Claude 사용료 합계 (달러 → 원, 설정 환율)."""
+    """사이클 기록의 Claude 사용량 (달러 → 원, 설정 환율).
+
+    total_*  : 전체 사용량을 API 요금으로 환산한 값 (참고용).
+    billed_* : 실제로 청구되는 몫 — API 키로 돈 사이클만. 구독 로그인(auth=login) 사이클은
+               구독 사용량에서 차감될 뿐 추가 결제가 없으므로 0 으로 본다.
+    수익률·손익 분해·비용 절감 장치는 billed 를 쓴다."""
     cfg = cfg or load_config()
     rate = cfg.get("usd_krw", 1450)
     today = now_kst().date().isoformat()
-    total = today_usd = 0.0
-    for c in load_jsonl(CYCLES_LOG):
+    total = today_usd = billed = billed_today = 0.0
+    rows = load_jsonl(CYCLES_LOG)
+    last_auth = next((c["auth"] for c in reversed(rows) if c.get("auth")), None)
+    for c in rows:
         usd = c.get("cost_usd") or 0
+        # 인증 방식이 기록되지 않은 옛 사이클은 지금 방식(구독이면 청구 없음)을 따른다
+        paid = c.get("auth") == "api_key" or (not c.get("auth") and last_auth != "login")
         total += usd
+        billed += usd if paid else 0
         t = parse_ts(c.get("finished") or c.get("started"))
         if t and t.astimezone(KST).date().isoformat() == today:
             today_usd += usd
+            billed_today += usd if paid else 0
     return {"total_usd": round(total, 2), "today_usd": round(today_usd, 2), "usd_krw": rate,
-            "total_krw": round(total * rate), "today_krw": round(today_usd * rate)}
+            "total_krw": round(total * rate), "today_krw": round(today_usd * rate),
+            "billed_usd": round(billed, 2), "billed_krw": round(billed * rate),
+            "billed_today_krw": round(billed_today * rate),
+            "subscription": last_auth == "login"}
 
 
 def scorecard():

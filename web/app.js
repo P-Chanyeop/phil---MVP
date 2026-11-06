@@ -64,14 +64,16 @@ function bdRow(label, v, sub) {
 }
 function renderBreakdown(b, start) {
   if (!b) return;
-  const parts = [["종목 매매", b.stock_total_krw], ["대기 자금", b.park_krw], ["Claude 비용", -b.claude_cost_krw]];
+  const sub = b.claude_subscription && !b.claude_cost_krw;
+  const parts = [["종목 매매", b.stock_total_krw], ["대기 자금", b.park_krw]].concat(sub ? [] : [["Claude 비용", -b.claude_cost_krw]]);
   const tot = parts.reduce((a, [, v]) => a + Math.abs(v), 0) || 1;
   $("#waterfall").innerHTML = `<div class="wf-bar">${parts.map(([l, v]) => `<div class="wf-seg ${l === "Claude 비용" ? "cost" : v >= 0 ? "up" : "down"}" style="width:${(Math.abs(v) / tot * 100).toFixed(1)}%" title="${l} ${won(v, 1)}"></div>`).join("")}</div>
     <div class="wf-legend">${parts.map(([l, v]) => `<span><i style="background:${l === "Claude 비용" ? "var(--muted)" : v >= 0 ? "var(--up)" : "var(--down)"}"></i>${l} <b class="${ud(v)}">${won(v, 1)}</b></span>`).join("")}</div>`;
   $("#bdRows").innerHTML =
     bdRow("종목 매매", b.stock_total_krw, `청산 ${b.closed_n}건 ${won(b.stock_realized_krw, 1)}, 보유 ${b.open_n}종목 평가 ${won(b.stock_unrealized_krw, 1)}`) +
     bdRow("대기 자금 (KODEX 200)", b.park_krw, b.park_value_krw ? `지금 ${won(b.park_value_krw)} 들어 있음` : "비어 있음") +
-    bdRow("Claude 비용", -b.claude_cost_krw, "사이클을 돌린 비용") +
+    (sub ? bdRow("Claude 사용량", 0, `구독 로그인이라 추가 청구 없음 (API 요금으로 치면 $${(+b.claude_usage_usd).toFixed(2)})`)
+         : bdRow("Claude 비용", -b.claude_cost_krw, "API 키로 돈 사이클 비용")) +
     `<div class="bd-row total"><div class="bd-l">합계</div><div class="bd-v ${ud(b.net_krw)}">${won(b.net_krw, 1)} <span class="sub">(${sp(b.net_krw / start * 100)})</span></div></div>`;
 }
 function stateRow(icon, text, tone) { return `<div class="state-row ${tone || ""}"><span class="si">${icon}</span><span>${text}</span></div>`; }
@@ -107,7 +109,8 @@ async function loadHome() {
   $("#sKospi").className = ud(sc.alpha_pct);
   $("#sKospiSub").textContent = sc.kospi_return_pct != null ? `코스피 ${sp(sc.kospi_return_pct)} 대비` : "같은 기간 초과수익";
   $("#sNet").textContent = sp(sc.return_after_cost_pct); $("#sNet").className = ud(sc.return_after_cost_pct);
-  $("#sNetSub").textContent = sc.claude_cost ? `Claude 누적 $${sc.claude_cost.total_usd.toFixed(2)}` : "";
+  const cc0 = sc.claude_cost || {};
+  $("#sNetSub").textContent = cc0.subscription && !cc0.billed_usd ? `구독이라 청구 없음 (환산 $${(cc0.total_usd || 0).toFixed(2)})` : cc0.billed_usd != null ? `Claude 청구 $${cc0.billed_usd.toFixed(2)}` : "";
   $("#sWin").textContent = t.n ? pct(t.win_rate) : "—";
   $("#sWinSub").textContent = t.n ? `청산 ${t.n}건, 평균 ${sp(t.avg_ret_pct)}` : "청산 없음";
   $("#sFc").textContent = `예측 ${sc.forecasts.total}건, 정산 ${cal.n || 0}건`;
@@ -145,7 +148,7 @@ async function loadHome() {
   }
   let sub = `사이클 ${S.cycles_run}번`;
   if (lc) sub += ` · 마지막 ${ago(lc.finished)} · ${lc.new_bets?.length ? "매수 " + lc.new_bets.length + "건" : "매수 없음"} · 예측 ${lc.new_forecasts ?? 0}건` + (lc.cost_usd ? ` · $${(+lc.cost_usd).toFixed(2)}` : "");
-  if (cc.total_usd != null) sub += ` · Claude 비용 오늘 $${cc.today_usd.toFixed(2)} / 누적 $${cc.total_usd.toFixed(2)}`;
+  if (cc.total_usd != null) sub += ` · Claude 사용량 오늘 $${cc.today_usd.toFixed(2)} / 누적 $${cc.total_usd.toFixed(2)} (API 환산${cc.subscription ? ", 구독이라 청구 없음" : ""})`;
   if (S.watch && S.watch.watching) sub += ` · 실시간 감시 ${S.watch.watching}종목`;
   if (S.operator.auto_loop) sub += S.next_auto_run ? ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후` : ` · 자동 반복: 장중 + 장 마감 후(${S.post_close_time || "16:30"} 연구) + 토요일 감사`;
   $("#cycleSub").textContent = sub;

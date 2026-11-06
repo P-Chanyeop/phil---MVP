@@ -735,6 +735,23 @@ class TestTuning(Tmp):
         tuning.check_cost()
         self.assertEqual(config.operator_state()["loop_minutes"], 120)
 
+    def test_subscription_usage_is_not_billed(self):
+        from phil import score
+        cyc = self.d / "cyc.jsonl"
+        mock.patch.object(score, "CYCLES_LOG", cyc).start()
+        config.append_jsonl(cyc, {"mode": "FULL", "auth": "login", "cost_usd": 3.0, "started": "2026-10-02T01:00:00Z"})
+        config.append_jsonl(cyc, {"mode": "FULL", "auth": "api_key", "cost_usd": 1.0, "started": "2026-10-03T01:00:00Z"})
+        cc = score.claude_cost()
+        self.assertEqual(cc["total_usd"], 4.0)                         # 사용량 환산은 전부
+        self.assertEqual(cc["billed_usd"], 1.0)                        # 청구는 API 키 몫만
+        config.append_jsonl(cyc, {"mode": "FULL", "auth": "login", "cost_usd": 2.0, "started": "2026-10-04T01:00:00Z"})
+        self.assertTrue(score.claude_cost()["subscription"])
+        config.save_operator_state({"loop_minutes": 120})
+        self.days([10_000_000] * 11, cost_per_day=1.0)                 # 옛 기록(청구분 없음) + 구독 로그인
+        self.assertEqual(tuning.window(10)["cost_krw"], 0)
+        self.assertEqual(tuning.check_cost(), [])                      # 비용 절감 안 켜짐
+        self.assertEqual(config.operator_state()["loop_minutes"], 120)
+
     def test_propose_bounds_and_trial(self):
         with self.assertRaises(tuning.TuneError):
             tuning.propose("safety.max_drawdown_pct", 50, "안전장치는 조정 대상이 아니라는 테스트입니다")
