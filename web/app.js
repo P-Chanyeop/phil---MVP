@@ -33,14 +33,62 @@ document.querySelectorAll(".nav button, .bottom button").forEach((b) => b.onclic
 
 // 홈
 let S = null, lastRetroCount = null, POS = [];
-function spark(curve, start) {
+// 차트: 기준점 대비 % 로 Phil 과 코스피를 같은 눈금에. 눈금·끝값·범례·마우스 올리면 값.
+let CHART = null;
+function drawChart({ phil, kospi, labels, baseLabel, xFirst, xLast, note }) {
   const svg = $("#spark");
-  const pts = [start, ...curve.map((c) => c.equity)];
-  if (pts.length < 2) { svg.innerHTML = `<line x1="0" y1="30" x2="300" y2="30" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>`; return; }
-  const lo = Math.min(...pts), hi = Math.max(...pts), rng = hi - lo || 1;
-  const xy = pts.map((v, i) => [i / (pts.length - 1) * 300, 54 - (v - lo) / rng * 48]);
-  const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--phil-fill)"/><path d="${d}" fill="none" stroke="var(--phil)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+  const all = phil.concat((kospi || []).filter((v) => v != null), [0]);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const pad = Math.max((hi - lo) * 0.12, 0.3); lo -= pad; hi += pad;
+  const y = (v) => (hi - v) / (hi - lo) * 100;
+  const n = phil.length, x = (i) => n > 1 ? i / (n - 1) * 300 : 150;
+  const path = (vals) => vals.map((v, i) => v == null ? "" : `${i && vals[i - 1] != null ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(2)}`).join(" ");
+  // 눈금: 0% 와 위아래 깔끔한 값
+  const step = [0.5, 1, 2, 5, 10, 20, 50].find((s) => (hi - lo) / s <= 5) || 100;
+  const ticks = []; for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) ticks.push(+t.toFixed(2));
+  if (!ticks.includes(0)) ticks.push(0);
+  svg.innerHTML = ticks.map((t) => `<line x1="0" x2="300" y1="${y(t)}" y2="${y(t)}" stroke="${t === 0 ? "var(--ink-2)" : "var(--line)"}" stroke-width="1" ${t === 0 ? 'stroke-dasharray="2 3" opacity=".7"' : ""} vector-effect="non-scaling-stroke"/>`).join("") +
+    (kospi ? `<path d="${path(kospi)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>` : "") +
+    `<path d="${path(phil)}" fill="none" stroke="var(--phil)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+  $("#chartY").innerHTML = ticks.map((t) => `<span class="${t === 0 ? "zero" : ""}" style="top:${y(t)}%">${t === 0 ? "0%" : (t > 0 ? "+" : "") + t + "%"}</span>`).join("");
+  // 끝값 (겹치면 벌림)
+  const pe = phil[n - 1], ke = kospi ? kospi.filter((v) => v != null).slice(-1)[0] : null;
+  let yp = y(pe), yk = ke != null ? y(ke) : null;
+  if (yk != null && Math.abs(yp - yk) < 12) { const m = (yp + yk) / 2, up = pe >= ke; yp = m + (up ? -6 : 6); yk = m + (up ? 6 : -6); }
+  $("#chartEnds").innerHTML = `<span class="ph" style="top:${yp}%">Phil ${sp(pe)}</span>` + (yk != null ? `<span class="kp" style="top:${yk}%">코스피 ${sp(ke)}</span>` : "");
+  $("#chartX").innerHTML = `<span>${esc(xFirst || "")}</span><span>${esc(xLast || "")}</span>`;
+  $("#chartLegend").innerHTML = `<span><i></i>Phil 자산</span>` + (kospi ? `<span><i class="kp"></i>같은 돈을 코스피에 넣었다면</span>` : "") + `<span><i class="base"></i>0% = ${esc(baseLabel)}</span>`;
+  $("#chartNote").innerHTML = note || "";
+  CHART = { phil, kospi, labels, n };
+}
+(() => {
+  const plot = $("#chartPlot"), hov = $("#chartHover");
+  if (!plot) return;
+  plot.addEventListener("mousemove", (ev) => {
+    if (!CHART || CHART.n < 2) return;
+    const r = plot.getBoundingClientRect(), f = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+    const i = Math.round(f * (CHART.n - 1)), k = CHART.kospi ? CHART.kospi[i] : null;
+    hov.style.left = (i / (CHART.n - 1) * 100) + "%"; hov.classList.remove("hidden"); hov.classList.toggle("flip", f > 0.6);
+    hov.querySelector(".tip").innerHTML = `<b>${esc(CHART.labels[i] || "")}</b><br>Phil <span class="${ud(CHART.phil[i])}">${sp(CHART.phil[i])}</span>` +
+      (k != null ? `<br>코스피 <span class="${ud(k)}">${sp(k)}</span>` : "");
+  });
+  plot.addEventListener("mouseleave", () => hov.classList.add("hidden"));
+})();
+function allChart(live) {
+  const st = live.start || {}, start = live.start_krw, rows = (live.daily || []).slice();
+  const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+  const lastK = (live.intraday || []).slice(-1)[0]?.kospi;
+  if (!rows.length || rows[rows.length - 1].date !== today) rows.push({ date: today, equity: live.equity_krw, kospi: lastK });
+  else rows[rows.length - 1] = { ...rows[rows.length - 1], equity: live.equity_krw, kospi: lastK || rows[rows.length - 1].kospi };
+  const pts = [{ date: st.start_date || "시작", equity: start, kospi: st.start_kospi }].concat(rows.filter((r) => r.date !== st.start_date));
+  const k0 = st.start_kospi || pts.find((p) => p.kospi)?.kospi;
+  const md = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${+d.slice(5, 7)}/${+d.slice(8)}` : d;
+  const phil = pts.map((p) => (p.equity / start - 1) * 100);
+  const kospi = k0 ? pts.map((p) => (p.kospi ? (p.kospi / k0 - 1) * 100 : null)) : null;
+  const gap = kospi ? phil[phil.length - 1] - kospi[kospi.length - 1] : null;
+  drawChart({ phil, kospi, labels: pts.map((p) => md(p.date) + " 장 마감"), baseLabel: `시작 (${md(st.start_date || "")}, ${won(start)})`,
+    xFirst: md(pts[0].date), xLast: "오늘",
+    note: gap != null ? `시작 이후 Phil ${sp(phil[phil.length - 1])}, 코스피 ${sp(kospi[kospi.length - 1])}. ${vsKospi(phil[phil.length - 1], kospi[kospi.length - 1])}.` : "" });
 }
 const CLASS_KO = {earnings: "실적", disclosure: "공시", "news-flow": "뉴스", momentum: "모멘텀", "mean-reversion": "되돌림",
   event: "이벤트", macro: "거시", other: "기타", rule: "엔진 규칙"};
@@ -118,9 +166,10 @@ async function loadHome() {
   $("#sBrier").className = cal.n ? (cal.brier_delta < 0 ? "up" : "down") : "";
   if (!liveOn) renderBreakdown(S.breakdown, sc.bankroll_start_krw);
   renderState(S);
-  if (chartMode === "all" || !LIVE || (LIVE.intraday || []).length < 2) {
-    spark(sc.equity_curve, sc.bankroll_start_krw);
-    $("#chartNote").textContent = chartMode === "all" ? "청산 기준 누적" : "오늘 장중 기록 없음";
+  if (LIVE && chartMode === "all") allChart(LIVE);
+  else if (!LIVE || (LIVE.intraday || []).length < 2) {
+    if (LIVE) allChart(LIVE);
+    $("#chartNote").innerHTML = (LIVE ? $("#chartNote").innerHTML + " " : "") + "오늘 장중 기록이 아직 없어 전체 흐름을 보여 줍니다.";
   }
   const mk = S.market || {};
   const idx = (k) => mk[k] && mk[k].price ? `${mk[k].name} ${mk[k].price.toLocaleString()} <span class="${ud(mk[k].change_pct)}">${sp(mk[k].change_pct)}</span>` : "";
@@ -347,18 +396,21 @@ document.querySelectorAll("#chartChips button").forEach((b) => b.onclick = () =>
   chartMode = b.dataset.chart; document.querySelectorAll("#chartChips button").forEach((x) => x.classList.toggle("on", x === b));
   loadHome(); if (chartMode === "today") loadLive();
 });
-function intradayChart(rows, start) {
-  const svg = $("#spark");
-  const eq = rows.map((r) => r.equity), k0 = rows.find((r) => r.kospi)?.kospi;
-  const kos = rows.map((r) => (k0 && r.kospi ? eq[0] * r.kospi / k0 : null));
-  const all = eq.concat(kos.filter((v) => v != null)), lo = Math.min(...all), hi = Math.max(...all), rng = hi - lo || 1;
-  const path = (vals) => vals.map((v, i) => v == null ? "" : `${i ? "L" : "M"}${(i / (vals.length - 1) * 300).toFixed(1)} ${(54 - (v - lo) / rng * 48).toFixed(1)}`).join(" ");
-  const d = path(eq);
-  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--phil-fill)"/>` +
-    (k0 ? `<path d="${path(kos)}" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>` : "") +
-    `<path d="${d}" fill="none" stroke="var(--phil)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
-  const chg = (eq[eq.length - 1] / eq[0] - 1) * 100;
-  $("#chartNote").innerHTML = `오늘 ${rows[0].t}~${rows[rows.length - 1].t}, Phil <span class="${ud(chg)}">${sp(chg)}</span>` + (k0 ? `, 점선은 코스피` : "");
+function vsKospi(pe, ke) {
+  const gap = pe - ke, g = Math.abs(gap).toFixed(2) + "%p";
+  const w = gap >= 0 ? (pe < 0 ? `${g} 덜 잃었습니다` : ke < 0 ? `코스피는 잃었는데 Phil 은 벌었습니다 (${g} 차이)` : `${g} 더 벌었습니다`)
+                     : (pe >= 0 ? `${g} 덜 벌었습니다` : ke >= 0 ? `코스피는 올랐는데 Phil 은 잃었습니다 (${g} 차이)` : `${g} 더 잃었습니다`);
+  return `코스피보다 <b class="${ud(gap)}">${w}</b>`;
+}
+function intradayChart(rows) {
+  const e0 = rows[0].equity, k0 = rows.find((r) => r.kospi)?.kospi;
+  const phil = rows.map((r) => (r.equity / e0 - 1) * 100);
+  const kospi = k0 ? rows.map((r) => (r.kospi ? (r.kospi / k0 - 1) * 100 : null)) : null;
+  const pe = phil[phil.length - 1], ke = kospi ? kospi.filter((v) => v != null).slice(-1)[0] : null, gap = ke != null ? pe - ke : null;
+  drawChart({ phil, kospi, labels: rows.map((r) => r.t), baseLabel: `${rows[0].t} 자산 ${won(e0)}`,
+    xFirst: rows[0].t, xLast: rows[rows.length - 1].t,
+    note: (gap != null ? `오늘 Phil ${sp(pe)}, 코스피 ${sp(ke)}. ${vsKospi(pe, ke)}. ` : "") +
+      (rows[0].t <= "09:01" ? "맨 왼쪽은 장 시작 전(어제 종가 기준)이라, 갭 하락·상승이 첫 칸에 세로로 나타납니다." : "") });
 }
 function liveItem(o) {
   const prev = lastPrices[o.id], dir = prev == null || prev === o.price ? "" : o.price > prev ? "flash-up" : "flash-down";

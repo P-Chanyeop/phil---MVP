@@ -15,8 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import time
 
 from phil import cycle, dart, kis, ledger, market, naver, notify, park, policy, resolve, rules, safety, score, tuning, watch
-from phil.config import (CYCLE_LOGS, CYCLES_LOG, DECISIONS, FORECASTS, INTRADAY, LEDGER, RETROS, ROOT, STRATEGY,
-                         WATCH_EVENTS, STRATEGY_HISTORY, load_config, load_env, load_jsonl,
+from phil.config import (CYCLE_LOGS, CYCLES_LOG, DAILY, DECISIONS, FORECASTS, INTRADAY, LEDGER, RETROS, ROOT, STRATEGY,
+                         WATCH_EVENTS, STRATEGY_HISTORY, META, load_config, load_env, load_json, load_jsonl,
                          operator_state, save_operator_state)
 
 WEB = ROOT / "web"
@@ -95,7 +95,9 @@ def live():
     return {"positions": pos, "park": psum, "cash_krw": ledger.cash(entries, cfg),
             "equity_krw": ledger.equity(entries, cfg, prices),
             "start_krw": cfg["sim_bankroll_krw"], "intraday": intraday, "ts": time.time(),
-            "breakdown": score.breakdown(prices)}
+            "breakdown": score.breakdown(prices),
+            "daily": [{"date": r["date"], "equity": r["equity"], "kospi": r.get("kospi")} for r in load_jsonl(DAILY)[-260:]],
+            "start": {k: load_json(META, {}).get(k) for k in ("start_date", "start_kospi")}}
 
 
 TOOL_WORDS = {"stock": "살펴보는 중", "news": "뉴스 읽는 중", "forecast": "예측 기록",

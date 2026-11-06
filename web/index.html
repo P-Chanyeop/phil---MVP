@@ -46,8 +46,17 @@
           <section class="panel" style="--o:4">
             <header class="ph"><h2>자산 흐름</h2>
               <div class="seg" id="chartChips"><button data-chart="today" class="on">오늘</button><button data-chart="all">전체</button></div></header>
-            <div class="ph-s" id="chartNote"></div>
-            <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+            <div class="chart-legend" id="chartLegend"></div>
+            <div class="chart" id="chart">
+              <div class="chart-y" id="chartY"></div>
+              <div class="chart-plot" id="chartPlot">
+                <svg id="spark" class="spark" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
+                <div class="chart-ends" id="chartEnds"></div>
+                <div class="chart-hover hidden" id="chartHover"><i></i><div class="tip"></div></div>
+              </div>
+            </div>
+            <div class="chart-x" id="chartX"></div>
+            <div class="ph-s chart-note" id="chartNote"></div>
           </section>
 
           <section class="panel" style="--o:5">
