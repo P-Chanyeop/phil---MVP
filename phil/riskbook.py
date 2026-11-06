@@ -17,7 +17,7 @@ risk.json 은 에이전트가 회고에서 배운 것을 적는 파일이다. �
 import json
 
 from . import market, naver, research
-from .config import STRATEGY, load_config
+from .config import RISK_META, STRATEGY, load_config, load_json, now_kst, save_json
 
 OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b, ">": lambda a, b: a > b,
        ">=": lambda a, b: a >= b, "==": lambda a, b: a == b}
@@ -128,6 +128,47 @@ def check(code, quote, bars, open_positions, risk=None, kbars=None):
     return {"sector": sector, "notes": notes}
 
 
+def filter_ages(risk=None, now=None):
+    """entry_filters 마다 처음 본 날짜·당시 장세를 기록(journal/risk_meta.json)하고 나이·재검증 필요 여부를 돌려준다.
+    에이전트가 필터에 "added"(YYYY-MM-DD)·"regime" 을 직접 적었으면 그 값을 쓴다."""
+    import datetime as dt
+    if risk is None:
+        risk, _ = load()
+    cfg = load_config()["policy"].get("risk_json") or {}
+    stale_days = cfg.get("stale_days", 30)
+    meta = load_json(RISK_META, {})
+    rg = market.regime_now()
+    now_label = rg["label"] if rg else None
+    today = (now or now_kst()).date()
+    out, changed = [], False
+    for f in risk.get("entry_filters") or []:
+        if not isinstance(f, dict) or not f.get("name"):
+            continue
+        m = meta.get(f["name"])
+        if not m:
+            m = {"added": str(f.get("added") or today.isoformat())[:10], "regime": f.get("regime") or now_label}
+            meta[f["name"]] = m
+            changed = True
+        try:
+            age = (today - dt.date.fromisoformat(m["added"])).days
+        except ValueError:
+            age = 0
+        why = []
+        if age >= stale_days:
+            why.append(f"{age}일 지남")
+        if m.get("regime") and now_label and m["regime"] != now_label:
+            why.append(f"만들 때 {m['regime']}, 지금 {now_label}")
+        out.append({"name": f["name"], "added": m["added"], "regime": m.get("regime"), "age_days": age,
+                    "recheck": bool(why), "why": ", ".join(why)})
+    names = {f["name"] for f in out}
+    for k in [k for k in meta if k not in names]:   # 지운 필터는 기록에서도 지움
+        del meta[k]
+        changed = True
+    if changed:
+        save_json(RISK_META, meta)
+    return out
+
+
 def summary():
     risk, problem = load()
     if not (STRATEGY / "risk.json").exists():
@@ -135,4 +176,5 @@ def summary():
     return {"enforced": enabled(), "problem": problem,
             "limits": {k: risk.get(k) for k in ("max_same_sector", "avoid_if_up_today_pct",
                                                 "position_size_pct_of_equity", "max_new_buys_per_cycle")},
-            "entry_filters": [r.get("name") for r in risk.get("entry_filters", []) if isinstance(r, dict)]}
+            "entry_filters": [r.get("name") for r in risk.get("entry_filters", []) if isinstance(r, dict)],
+            "filter_ages": filter_ages(risk)}

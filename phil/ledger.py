@@ -74,7 +74,8 @@ def equity(entries=None, cfg=None, prices=None):
 
 
 def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rationale,
-        amount_krw=None, cycle_id=None, now=None):
+        amount_krw=None, cycle_id=None, now=None, bear_case=None):
+    """bear_case: 반대 논리. None 이면 검사 안 함 (엔진·테스트용) — 에이전트 경로(tools.py)는 항상 넘긴다."""
     cfg = load_config()
     lim, costs = cfg["limits"], cfg["costs"]
     risk, risk_problem = riskbook.load() if riskbook.enabled(cfg) else ({}, None)
@@ -108,6 +109,13 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         raise Rejected("est-prob 는 (0,1) 범위")
     if not rationale or len(rationale.strip()) < 10:
         raise Rejected("rationale(근거)를 한 줄 이상 적어야 함")
+    if bear_case is not None:
+        need = cfg["policy"].get("bear_case_min_chars", 30)
+        if len(bear_case.strip()) < need:
+            raise Rejected(f"반대 논리(--bear-case)를 {need}자 이상 적어야 함: 이 호재가 이미 가격에 반영됐을 이유, "
+                           f"산 뒤 빠질 이유. 반대 논리가 근거보다 강하면 사지 마라")
+        if bear_case.strip() == rationale.strip():
+            raise Rejected("반대 논리가 근거와 같음 — 사지 말아야 할 이유를 따로 적어라")
     why = policy.check_edge_class(edge_class, cfg)
     if why:
         raise Rejected(why)
@@ -173,6 +181,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "target_price": round(price * (1 + target_pct), 2) if target_pct else None,
         "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
         "edge_class": edge_class, "rationale": rationale.strip(), "exploration": exploration,
+        "bear_case": (bear_case or "").strip()[:500] or None,
         "sector": sector, "size_pct": round(pct, 4), "size_notes": size_notes,
         "strategy_rev": strategy_rev(),
         "status": "open", "last_price": price,

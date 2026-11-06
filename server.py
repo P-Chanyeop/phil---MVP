@@ -80,7 +80,7 @@ def live():
                     "progress": max(0.0, min(1.0, (price - lo) / (hi - lo))) if hi > lo else 0.5,
                     "entry_progress": max(0.0, min(1.0, (e["entry_price"] - lo) / (hi - lo))) if hi > lo else 0.5,
                     "horizon_days": e["horizon_days"], "exploration": e.get("exploration", False),
-                    "edge_class": e["edge_class"], "rationale": e.get("rationale", ""),
+                    "edge_class": e["edge_class"], "rationale": e.get("rationale", ""), "bear_case": e.get("bear_case"),
                     "sector": (e.get("sector") or {}).get("name"), "bought": e["ts"],
                     "est_prob": e.get("est_prob"), "base_rate": e.get("base_rate"),
                     "size_notes": e.get("size_notes") or []})

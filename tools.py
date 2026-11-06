@@ -99,6 +99,8 @@ def main():
     b.add_argument("--amount", type=float, help="매수 금액(원). 생략 시 한도까지")
     b.add_argument("--edge-class", required=True, choices=classes)
     b.add_argument("--rationale", required=True)
+    b.add_argument("--bear-case", required=True,
+                   help="반대 논리: 이 호재가 이미 가격에 반영됐을 이유, 산 뒤 빠질 이유 (30자 이상)")
     sub.add_parser("features")
     sub.add_parser("audit")
     sub.add_parser("discoveries")
@@ -158,7 +160,7 @@ def main():
                  "base_rate": r["base_rate"], "edge_vs_base": round(r["est_prob"] - r["base_rate"], 4)})
         elif a.cmd == "buy":
             e = ledger.buy(a.code, a.est_prob, a.horizon, a.stop, a.target, a.edge_class,
-                           a.rationale, amount_krw=a.amount)
+                           a.rationale, amount_krw=a.amount, bear_case=a.bear_case)
             out({"bought": e["id"], "name": e["name"], "qty": e["qty"], "fill": e["entry_price"],
                  "cost_krw": e["cost_krw"], "stop": e["stop_price"], "target": e["target_price"],
                  "base_rate": e["base_rate"], "edge": e["edge"],
@@ -176,7 +178,7 @@ def main():
                                  "rank_by": "신호가 많을 때 고르는 기준 지표 (큰 순, 앞에 - 면 작은 순)"},
                  "entry": "신호일 종가 매수 (실전은 15:05 현재가), 비용 포함"})
         elif a.cmd == "backtest":
-            r = research.backtest(a.spec)
+            r = research.backtest(a.spec, attempts=research.record_attempt(a.spec))
             out(r)
         elif a.cmd == "rule":
             if a.action == "list":

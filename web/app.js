@@ -93,18 +93,18 @@ function allChart(live) {
 const CLASS_KO = {earnings: "실적", disclosure: "공시", "news-flow": "뉴스", momentum: "모멘텀", "mean-reversion": "되돌림",
   event: "이벤트", macro: "거시", other: "기타", rule: "엔진 규칙"};
 const ko = (c) => CLASS_KO[c] || c;
-const whyLine = (r) => r ? `<div class="why">왜 샀나 · ${esc(r)}</div>` : "";
+const whyLine = (r, bear) => (r ? `<div class="why">왜 샀나 · ${esc(r)}</div>` : "") + (bear ? `<div class="why bear">반대 논리 · ${esc(bear)}</div>` : "");
 function openItem(o) {
   return `<div class="item" data-pos="${esc(o.id)}"><div class="q">${esc(o.name)} <span class="sub">${esc(o.code)}</span></div>
     <div class="meta"><span class="chip">${o.qty}주 @ ${Math.round(o.entry).toLocaleString()}</span><span class="${ud(o.unrealized_pct)}">${sp(o.unrealized_pct)}</span>
     <span>손절 ${Math.round(o.stop).toLocaleString()}</span>${o.target ? `<span>목표 ${Math.round(o.target).toLocaleString()}</span>` : ""}<span>${o.horizon_days}일 보유</span><span>${ko(o.edge_class)}</span>${o.exploration ? '<span class="chip gray">탐색</span>' : ""}</div>
-    ${whyLine(POS.find((p) => p.id === o.id)?.rationale)}</div>`;
+    ${whyLine(POS.find((p) => p.id === o.id)?.rationale, POS.find((p) => p.id === o.id)?.bear_case)}</div>`;
 }
 function closedItem(e) {
   const win = e.pnl_krw > 0;
   return `<div class="item" data-pos="${esc(e.id)}"><div class="q"><span class="chip ${win ? "good" : "bad"}">${win ? "+" : "−"}${Math.abs(e.ret_pct).toFixed(1)}%</span> ${esc(e.name)} <span class="${ud(e.pnl_krw)}">${won(e.pnl_krw, 1)}</span></div>
     <div class="meta"><span>나간 이유: ${esc(e.exit_reason)}</span><span>${ko(e.edge_class)}${e.exploration ? " · 탐색" : ""}</span><span>${ago(e.exit_ts)}</span></div>
-    ${whyLine(e.rationale)}</div>`;
+    ${whyLine(e.rationale, e.bear_case)}</div>`;
 }
 function bdRow(label, v, sub) {
   return `<div class="bd-row"><div class="bd-l">${label}${sub ? `<span class="sub">${sub}</span>` : ""}</div>
@@ -142,7 +142,9 @@ function renderState(S) {
   if (tb.cost_saver) rows.push(stateRow("💸", "비용 절감 중 — Claude 비용이 수익보다 커서 자동 반복을 4시간으로 늘렸습니다", "warnrow"));
   if (rk.enforced) {
     const f = (rk.entry_filters || []).length, l = rk.limits || {};
+    const stale = (rk.filter_ages || []).filter((x) => x.recheck);
     rows.push(stateRow("📏", `Phil 의 규칙 강제 중 — 같은 업종 ${l.max_same_sector ?? "제한 없음"}종목까지 · 당일 +${l.avoid_if_up_today_pct ?? "∞"}% 이상 추격 금지 · 진입 필터 ${f}개${rk.problem ? ` · <span class="neg">${esc(rk.problem)}</span>` : ""}`));
+    if (stale.length) rows.push(stateRow("⏳", `재검증 필요한 진입 필터 ${stale.length}개 — ${stale.map((x) => `${esc(x.name)} (${esc(x.why)})`).join(", ")}. 주간 감사에서 Phil 이 다시 확인합니다`, "warnrow"));
   }
   rows.push(stateRow(mk.can_trade_now ? "●" : "○", mk.can_trade_now ? "장중. 매매는 09:30~15:15, 개장 직후 30분은 쉽니다" : esc(mk.reason || "장 밖")));
   $("#stateRows").innerHTML = rows.join("");
@@ -216,7 +218,7 @@ document.addEventListener("click", (ev) => {
     <div class="kv mt"><b>상태</b>${e.status === "open" ? "보유 중" : esc(e.exit_reason)}<br><b>수량 / 매수가</b>${e.qty}주 / ${Math.round(e.entry_price).toLocaleString()}원<br>
     <b>매수 금액</b>${won(e.cost_krw)}<br><b>손절 / 목표</b>${Math.round(e.stop_price).toLocaleString()} / ${e.target_price ? Math.round(e.target_price).toLocaleString() : "없음"}<br>
     <b>보유 기간</b>${e.horizon_days}거래일<br><b>내 확률 / 기저율</b>${pct(e.est_prob)} / ${pct(e.base_rate)} (엣지 ${e.edge})<br><b>근거 유형</b>${ko(e.edge_class)}${e.exploration ? " (탐색 매수)" : ""}<br>
-    ${e.sector ? `<b>업종</b>${esc(e.sector.name)}<br>` : ""}${e.size_pct ? `<b>크기</b>자산의 ${(e.size_pct * 100).toFixed(1)}%<br>` : ""}${(e.size_notes || []).length ? `<b>크기 결정</b>${e.size_notes.map(esc).join("<br>")}<br>` : ""}<b>산 시각</b>${new Date(e.ts).toLocaleString("ko-KR")}<br>
+    ${e.sector ? `<b>업종</b>${esc(e.sector.name)}<br>` : ""}${e.size_pct ? `<b>크기</b>자산의 ${(e.size_pct * 100).toFixed(1)}%<br>` : ""}${e.bear_case ? `<b>반대 논리</b>${esc(e.bear_case)}<br>` : ""}${(e.size_notes || []).length ? `<b>크기 결정</b>${e.size_notes.map(esc).join("<br>")}<br>` : ""}<b>산 시각</b>${new Date(e.ts).toLocaleString("ko-KR")}<br>
     ${e.pnl_krw != null ? `<b>손익</b><span class="${ud(e.pnl_krw)}">${won(e.pnl_krw, 1)} (${sp(e.ret_pct)})</span><br>` : ""}${e.calib ? `<b>만기 종가</b>${e.calib === "up" ? "올랐음" : "내렸음"} (${Math.round(e.calib_close).toLocaleString()})<br>` : ""}</div>
     <div class="sub mt">근거</div><div>${esc(e.rationale)}</div>
     <p><a href="https://m.stock.naver.com/domestic/stock/${esc(e.code)}" target="_blank" rel="noopener">네이버 증권에서 보기 →</a></p>`);
@@ -422,7 +424,7 @@ function liveItem(o) {
       <div class="pos-pnl ${ud(o.pnl_pct)}">${sp(o.pnl_pct)} · ${won(o.pnl_krw, 1)}</div></div></div>
     <div class="bar"><span class="entry" style="left:${(o.entry_progress * 100).toFixed(1)}%"></span><span class="now" style="left:${(o.progress * 100).toFixed(1)}%"></span></div>
     <div class="bar-labels"><span>손절 ${Math.round(o.stop).toLocaleString()}</span><span>${o.target ? "목표 " + Math.round(o.target).toLocaleString() : "목표 없음 (만기 청산)"}</span></div>
-    ${whyLine(o.rationale)}${(o.size_notes || []).length ? `<div class="why dim">크기 · ${esc(o.size_notes[o.size_notes.length - 1])}</div>` : ""}</div>`;
+    ${whyLine(o.rationale, o.bear_case)}${(o.size_notes || []).length ? `<div class="why dim">크기 · ${esc(o.size_notes[o.size_notes.length - 1])}</div>` : ""}</div>`;
 }
 async function loadLive() {
   try { LIVE = await api("/api/live"); } catch { return; }

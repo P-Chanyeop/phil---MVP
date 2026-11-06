@@ -14,7 +14,7 @@ import json
 import math
 
 from . import market, naver
-from .config import BARS_DIR, load_config, now_kst
+from .config import BARS_DIR, BT_ATTEMPTS, append_jsonl, iso, load_config, load_jsonl, now_kst
 
 FEATURES = {
     "ret_1d": "오늘 등락률 %", "ret_5d": "5일 수익률 %", "ret_20d": "20일 수익률 %",
@@ -280,7 +280,7 @@ def prepare(data=None):
     return {"rows": rows, "uni": uni, "dates": dates, "split": dates[int(len(dates) * 2 / 3)]}
 
 
-def backtest(spec, data=None, prepared=None):
+def backtest(spec, data=None, prepared=None, attempts=1):
     spec = validate_spec(spec)
     costs = load_config()["costs"]
     pre = prepared or prepare(data)
@@ -323,22 +323,52 @@ def backtest(spec, data=None, prepared=None):
         "baseline_train": _stats(btrain), "baseline_test": _stats(btest),
         "by_regime": {"상승장": _stats([t for t in trades if t["bull"]]),
                       "하락장": _stats([t for t in trades if not t["bull"]])},
-        "verdict": verdict(_stats(train), _stats(test), _stats(btest)),
+        "verdict": verdict(_stats(train), _stats(test), _stats(btest), attempts),
+        "variants_tried": attempts,
+        "required_profit_factor": required_pf(attempts),
         "recent_test_trades": [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in t.items()}
                                for t in test[-8:]],
         "note": "유니버스가 현재 시총 상위 300 이라 생존 편향이 있음. 검증(test) 구간 성적과 기준선 대비를 보라.",
     }
 
 
-def verdict(train, test, base_test):
+def family(spec):
+    """가설 묶음: 숫자를 뺀 조건의 (지표, 연산자) 조합. 숫자만 바꾼 변형은 같은 가설로 본다."""
+    return "|".join(sorted(f"{c[0]}{c[1]}" for c in spec["conditions"]))
+
+
+def record_attempt(spec):
+    """에이전트가 이 변형을 시험했다고 기록하고, 같은 가설로 시험한 서로 다른 변형 수를 돌려준다.
+    (똑같은 spec 을 다시 돌리는 건 새 변형이 아니다.)"""
+    import datetime as dt
+    spec = validate_spec(spec)
+    fam, key = family(spec), json.dumps(spec, sort_keys=True, ensure_ascii=False)
+    days = load_config()["rules"]["promote_from_backtest"].get("variant_window_days", 90)
+    since = (now_kst() - dt.timedelta(days=days)).isoformat()
+    seen = {r["key"] for r in load_jsonl(BT_ATTEMPTS) if r.get("family") == fam and r.get("ts", "") >= since}
+    if key not in seen:
+        append_jsonl(BT_ATTEMPTS, {"ts": iso(), "family": fam, "key": key})
+        seen.add(key)
+    return len(seen)
+
+
+def required_pf(attempts=1):
     c = load_config()["rules"]["promote_from_backtest"]
+    extra = min(c.get("per_variant_pf_step", 0) * max(0, attempts - 1), c.get("max_variant_penalty", 0))
+    return round(c["min_test_profit_factor"] + extra, 2)
+
+
+def verdict(train, test, base_test, attempts=1):
+    c = load_config()["rules"]["promote_from_backtest"]
+    need_pf = required_pf(attempts)
     reasons = []
     if test.get("n", 0) < c["min_test_trades"]:
         reasons.append(f"검증 구간 거래 {test.get('n', 0)}건 < {c['min_test_trades']}")
     if (test.get("avg_net_pct") or -1) < c["min_test_avg_net_pct"]:
         reasons.append(f"검증 평균 순수익 {test.get('avg_net_pct')}% < {c['min_test_avg_net_pct']}%")
-    if (test.get("profit_factor") or 0) < c["min_test_profit_factor"]:
-        reasons.append(f"검증 손익비 {test.get('profit_factor')} < {c['min_test_profit_factor']}")
+    if (test.get("profit_factor") or 0) < need_pf:
+        extra = f" (같은 가설 변형 {attempts}개째라 기준 {c['min_test_profit_factor']} → {need_pf})" if need_pf > c["min_test_profit_factor"] else ""
+        reasons.append(f"검증 손익비 {test.get('profit_factor')} < {need_pf}{extra}")
     if (train.get("avg_net_pct") or -1) <= 0:
         reasons.append("학습 구간 평균이 0 이하 (우연일 가능성)")
     if base_test.get("n") and (test.get("avg_net_pct") or -9) <= (base_test.get("avg_net_pct") or 0):

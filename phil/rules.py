@@ -50,7 +50,7 @@ def propose(name, spec, why):
         raise RuleError(f"활성 규칙 한도({cfg['max_rules']}) — 먼저 약한 규칙을 은퇴시켜라")
     if any(r["spec"] == spec and r["status"] in ("shadow", "live") for r in reg["rules"]):
         raise RuleError("같은 규칙이 이미 활성 상태")
-    bt = research.backtest(spec)
+    bt = research.backtest(spec, attempts=research.record_attempt(spec))
     r = {"id": uuid.uuid4().hex[:8], "name": name.strip()[:60], "why": why.strip()[:500],
          "spec": spec, "created": iso(),
          "backtest": {k: bt[k] for k in ("period", "train", "test", "baseline_test", "verdict")}}

@@ -144,6 +144,15 @@ class TestBuy(Tmp):
         self.assertLessEqual(w["cost_krw"], 1_000_000)      # 부정확한 유형은 절반(10%)
         self.assertIn("x0.5", w["size_notes"][0])
 
+    def test_bear_case_required_on_agent_path(self):
+        with self.assertRaises(ledger.Rejected) as cm:
+            self.buy(bear_case="짧음")
+        self.assertIn("반대 논리", str(cm.exception))
+        with self.assertRaises(ledger.Rejected):
+            self.buy(bear_case="실적 서프라이즈 테스트 근거", rationale="실적 서프라이즈 테스트 근거")
+        e = self.buy(bear_case="컨센서스가 이미 올라 있어 서프라이즈 폭이 작고, 발표 전 5일간 +8% 선반영")
+        self.assertIn("선반영", e["bear_case"])
+
     def test_risk_json_enforced(self):
         uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ("005930", "000660", "035420")}
         mock.patch("phil.market.universe", lambda refresh=False: uni).start()
@@ -389,10 +398,10 @@ class TestRules(Tmp):
                 "verdict": {"pass": ok, "reasons": [] if ok else ["검증 손실"]}}
 
     def test_lifecycle(self):
-        with mock.patch("phil.research.backtest", lambda spec: self.fake_bt(False)):
+        with mock.patch("phil.research.backtest", lambda spec, attempts=1: self.fake_bt(False)):
             r = rules.propose("나쁜 규칙", SPEC, "백테스트에서 떨어질 가설")
         self.assertEqual(r["status"], "rejected")
-        with mock.patch("phil.research.backtest", lambda spec: self.fake_bt(True)):
+        with mock.patch("phil.research.backtest", lambda spec, attempts=1: self.fake_bt(True)):
             r = rules.propose("좋은 규칙", SPEC, "급등 다음 날 추세 지속 가설")
         self.assertEqual(r["status"], "shadow")
         # 그림자 신호 15건이 모두 +1% 로 끝났다고 가정 → 실전 승격
@@ -671,7 +680,7 @@ class TestUpgrades(Tmp):
         gated_bt = {"spec": {**base["spec"], "conditions": base["spec"]["conditions"] + [["kospi_vs_ma60", ">", 0]]},
                     "train": {"avg_net_pct": 1}, "test": {"n": 50, "avg_net_pct": 1, "profit_factor": 2},
                     "baseline_test": {"avg_net_pct": 0}, "by_regime": {}, "verdict": {"pass": True}}
-        with mock.patch("phil.research.backtest", lambda spec, prepared=None: gated_bt):
+        with mock.patch("phil.research.backtest", lambda spec, prepared=None, attempts=1: gated_bt):
             g = discover.regime_guard(bad, None, cfg)
         self.assertIn(["kospi_vs_ma60", ">", 0], g["spec"]["conditions"])
         self.assertIn("상승장만", g["name"])
@@ -830,4 +839,47 @@ class TestByModel(Tmp):
         self.assertGreater(bm["sonnet-5-5"]["forecast"]["brier_delta"], 0)
         self.assertLess(bm["opus-5-5"]["forecast"]["brier_delta"], 0)
         self.assertEqual(bm["opus-5-5"]["forecast"]["n"], 4)
+
+
+class TestVariantsAndFilterAges(Tmp):
+    def setUp(self):
+        super().setUp()
+        mock.patch.object(research, "BT_ATTEMPTS", self.d / "bt.jsonl").start()
+
+    def test_variant_count_raises_bar(self):
+        a = {"conditions": [["ret_20d", "<", -15], ["ret_1d", ">", 5]], "horizon": 3, "stop": 0.07}
+        self.assertEqual(research.record_attempt(a), 1)
+        self.assertEqual(research.record_attempt(a), 1)                    # 같은 spec 재실행은 새 변형 아님
+        b = dict(a, conditions=[["ret_1d", ">", 4], ["ret_20d", "<", -12]])  # 숫자만 바꾼 변형
+        self.assertEqual(research.record_attempt(b), 2)
+        c = dict(a, conditions=[["vol_ratio", ">", 2]])                     # 다른 가설
+        self.assertEqual(research.record_attempt(c), 1)
+        base = research.required_pf(1)
+        self.assertAlmostEqual(research.required_pf(3), base + 0.1)
+        self.assertAlmostEqual(research.required_pf(50), base + 0.5)       # 상한
+        train, test, bt = {"avg_net_pct": 0.5}, {"n": 40, "avg_net_pct": 0.5, "profit_factor": base + 0.06}, {"n": 0}
+        self.assertTrue(research.verdict(train, test, bt, attempts=1)["pass"])
+        v = research.verdict(train, test, bt, attempts=3)
+        self.assertFalse(v["pass"])
+        self.assertIn("변형 3개째", v["reasons"][0])
+
+    def test_filter_ages_flag_stale_and_regime_change(self):
+        from phil import riskbook, market
+        mock.patch.object(riskbook, "RISK_META", self.d / "risk_meta.json").start()
+        risk = {"entry_filters": [{"name": "A", "conditions": [["ret_20d", "<", -15]]},
+                                  {"name": "B", "conditions": [["ret_1d", ">", 5]], "added": "2026-09-01", "regime": "하락장"}]}
+        now = dt.datetime(2026, 11, 7, 10, 0, tzinfo=KST)
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "하락장", "kospi_vs_ma60": -20}):
+            ages = {x["name"]: x for x in riskbook.filter_ages(risk, now)}
+        self.assertFalse(ages["A"]["recheck"])                            # 오늘 처음 봄, 같은 장세
+        self.assertTrue(ages["B"]["recheck"])                             # 67일 지남
+        self.assertIn("일 지남", ages["B"]["why"])
+        later = now + dt.timedelta(days=5)
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "상승장", "kospi_vs_ma60": 3}):
+            ages = {x["name"]: x for x in riskbook.filter_ages(risk, later)}
+        self.assertTrue(ages["A"]["recheck"])                             # 장세가 바뀜
+        self.assertIn("하락장", ages["A"]["why"])
+        risk["entry_filters"] = risk["entry_filters"][:1]
+        riskbook.filter_ages(risk, later)
+        self.assertNotIn("B", config.load_json(self.d / "risk_meta.json", {}))   # 지운 필터는 기록에서도 지움
 

@@ -204,3 +204,4 @@ details summary{cursor:pointer;font-weight:600;font-size:13px;color:var(--phil)}
 }
 
 .chart-def{display:block;margin-top:6px;color:var(--muted)}
+.why.bear{border-left-color:var(--down);color:var(--muted)}
