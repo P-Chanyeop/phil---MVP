@@ -39,7 +39,7 @@ def net_out():
 def _price():
     q = naver.quote(load_config()["park"]["code"], allow_etf=True)
     if not q["tradable"]:
-        raise naver.DataError("대기 자금 ETF 거래 불가")
+        raise naver.DataError(f"대기 자금 ETF 일시 거래 불가 (네이버 상태 {q.get('status')})")
     return q["price"]
 
 

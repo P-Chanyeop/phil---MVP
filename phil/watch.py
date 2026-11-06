@@ -78,8 +78,12 @@ def check_positions(now):
     return prices
 
 
+PARK_HOLD = {"until": 0.0, "last_event": 0.0}
+
+
 def manage_park(now, prices):
-    """대기 자금: 시세 반영, 남는 현금 투입, 꺼졌으면 전부 매도."""
+    """대기 자금: 시세 반영, 남는 현금 투입, 꺼졌으면 전부 매도.
+    ETF 가 잠깐 거래 불가(네이버 상태)여도 감시 루프 전체를 멈추지 않는다 — 10분 쉬었다 다시."""
     code = load_config()["park"]["code"]
     try:
         p = naver.quote(code, allow_etf=True)["price"]
@@ -87,6 +91,18 @@ def manage_park(now, prices):
         return
     prices[code] = p
     park.mark(p)
+    if time.time() < PARK_HOLD["until"]:
+        return
+    try:
+        _park_actions(now, prices)
+    except naver.DataError as e:
+        PARK_HOLD["until"] = time.time() + 600
+        if time.time() - PARK_HOLD["last_event"] > 1800:
+            PARK_HOLD["last_event"] = time.time()
+            event("park", f"⏸️ {e} — 대기 자금 매매만 10분 쉬고 다시 시도 (종목 감시·손절은 정상)")
+
+
+def _park_actions(now, prices):
     if not park.enabled():
         r = park.withdraw_all()
         if r:
@@ -255,10 +271,18 @@ def tick():
     except Exception as e:  # noqa: BLE001
         STATUS["last_error"] = f"scheduled: {e}"
     if _market_open(now):
-        prices = check_positions(now)
-        manage_park(now, prices)
-        snapshot_equity(now, prices)
-        sync_kis(now)
+        errors, prices = [], {}
+        for name, step in (("손절·익절 감시", lambda: prices.update(check_positions(now) or {})),
+                           ("대기 자금", lambda: manage_park(now, prices)),
+                           ("자산 기록", lambda: snapshot_equity(now, prices)),
+                           ("한투 동기화", lambda: sync_kis(now))):
+            try:   # 한 단계가 실패해도 나머지(특히 손절·자산 기록)는 계속 돈다
+                step()
+            except Exception as e:  # noqa: BLE001
+                traceback.print_exc()
+                errors.append(f"{name}: {e}")
+        if errors:
+            raise RuntimeError(" / ".join(errors))
     else:
         STATUS["watching"] = sum(1 for e in ledger.read_ledger() if e["status"] == "open")
     try:  # 장 밖에서도 (마감 후 정산·청산 알림)

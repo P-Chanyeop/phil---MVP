@@ -55,7 +55,10 @@ def _ensure_cash(cost, entries, cfg):
     """현금이 모자라면 대기 자금(ETF)을 팔아서 마련 (네트워크 — 잠금 밖에서 호출)."""
     short = cost - cash(entries, cfg)
     if short > 0:
-        park.raise_cash(short)
+        try:
+            park.raise_cash(short)
+        except naver.DataError as e:
+            raise Rejected(f"현금 부족 — 대기 자금 ETF 를 지금 팔 수 없음 ({e}). 잠시 후 다시") from None
 
 
 def equity(entries=None, cfg=None, prices=None):

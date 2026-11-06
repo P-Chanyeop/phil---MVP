@@ -70,6 +70,7 @@ def quote(code, allow_etf=False):
         "market_status": d.get("marketStatus"),
         "tradable": d.get("tradableStatusCode") == "ok"
                     and (d.get("tradeStopType") or {}).get("name") == "TRADING",
+        "status": f"{d.get('tradableStatusCode')}/{(d.get('tradeStopType') or {}).get('name')}",
         "exchange": (d.get("stockExchangeType") or {}).get("name"),
         "traded_at": d.get("localTradedAt"),
     }

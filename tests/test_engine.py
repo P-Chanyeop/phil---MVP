@@ -495,6 +495,49 @@ class TestPark(Tmp):
         self.assertGreater(ledger.equity(ledger.read_ledger()), eq0 + 500_000)
 
 
+class TestParkHalt(Tmp):
+    """KODEX 200 이 잠깐 '거래 불가'로 떠도 감시 루프·매수가 터지지 않아야 한다."""
+    def setUp(self):
+        super().setUp()
+        mock.patch("phil.park.enabled", lambda: True).start()
+        mock.patch("phil.naver.quote", lambda c, allow_etf=False: {
+            "code": c, "name": "x", "price": 100.0, "market_status": "OPEN",
+            "tradable": c != "069500", "status": "ok/TRADING" if c != "069500" else "ok/HALT"}).start()
+        watch.PARK_HOLD.update(until=0.0, last_event=0.0)
+
+    def test_manage_park_survives_and_backs_off(self):
+        now = dt.datetime(2026, 11, 6, 10, 0, tzinfo=KST)
+        calls = []
+        real = park.rebalance
+        mock.patch("phil.park.rebalance", lambda *a: calls.append(1) or real(*a)).start()
+        watch.manage_park(now, {})                              # 예외 없이 끝남
+        watch.manage_park(now, {})                              # 10분 동안은 다시 시도 안 함
+        self.assertEqual(len(calls), 1)
+        evs = [e for e in config.load_jsonl(watch.WATCH_EVENTS) if e["kind"] == "park"]
+        self.assertEqual(len(evs), 1)
+        self.assertIn("ok/HALT", evs[0]["msg"])
+
+    def test_buy_needing_park_cash_is_rejected_cleanly(self):
+        config.save_json(park.PARK, {"qty": 95_000, "cost_krw": 9_500_000, "net_out": 9_500_000,
+                                     "last_price": 100.0, "trades": []})
+        with self.assertRaises(ledger.Rejected) as cm:
+            ledger.buy("005930", 0.62, 3, 0.04, None, "earnings", "대기 자금이 묶였을 때 매수 테스트")
+        self.assertIn("대기 자금", str(cm.exception))
+
+    def test_tick_keeps_other_steps_running(self):
+        done = []
+        mock.patch("phil.watch._market_open", lambda now: True).start()
+        mock.patch("phil.watch.scheduled", lambda now: None).start()
+        mock.patch("phil.watch.check_positions", lambda now: {}).start()
+        mock.patch("phil.watch.manage_park", lambda now, p: (_ for _ in ()).throw(ValueError("boom"))).start()
+        mock.patch("phil.watch.snapshot_equity", lambda now, p: done.append("snap")).start()
+        mock.patch("phil.watch.sync_kis", lambda now: done.append("kis")).start()
+        mock.patch("phil.notify.scan_and_notify", lambda: None).start()
+        with self.assertRaises(RuntimeError):                   # 진짜 오류는 여전히 알림 대상
+            watch.tick()
+        self.assertEqual(done, ["snap", "kis"])                 # 그래도 나머지 단계는 돌았음
+
+
 class TestUpgrades(Tmp):
     def test_claude_cost_after_cost_return(self):
         config.dump_jsonl(self.d / "cyc.jsonl", [{"finished": config.iso(), "cost_usd": 1.0},
