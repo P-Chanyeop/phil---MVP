@@ -363,7 +363,9 @@ function liveItem(o) {
 }
 async function loadLive() {
   try { LIVE = await api("/api/live"); } catch { return; }
-  if (LIVE.positions.some((o) => !POS.find((x) => x.id === o.id))) loadPositions();
+  const liveIds = new Set(LIVE.positions.map((o) => o.id));
+  if (LIVE.positions.some((o) => !POS.find((x) => x.id === o.id)) ||          // 새로 산 종목
+      POS.some((x) => x.status === "open" && !liveIds.has(x.id))) loadPositions();   // 손절·목표·만기로 방금 청산된 종목
   const pk = LIVE.park || {};
   const gate = (pk.gate || {}).reason;
   const parkHtml = pk.qty ? `<div class="pos-live"><div class="pos-head"><div><span class="pos-name">💤 ${esc(pk.name)}</span> <span class="chip gray">대기 자금</span>
@@ -415,6 +417,7 @@ loadLive(); loadFeed();
 setInterval(refresh, 5000);
 setInterval(() => { if (currentTab === "home" && !document.hidden) loadLive(); }, 5000);
 setInterval(() => { if (currentTab === "home" && !document.hidden) loadFeed(); }, 8000);
+setInterval(() => { if (currentTab === "home" && !document.hidden) loadPositions(); }, 30000);   // 혹시 놓친 변화 대비
 
 $("#btnKis").onclick = async () => {
   const on = $("#kisBadge").textContent === "ON";
