@@ -812,3 +812,22 @@ class TestAutoLoopRestart(Tmp):
             loop._tick()
         self.assertEqual(started, [1])
 
+
+class TestByModel(Tmp):
+    def test_stats_grouped_by_cycle_model(self):
+        from phil import policy
+        cyc = self.d / "cyc.jsonl"
+        mock.patch.object(policy, "CYCLES_LOG", cyc).start()
+        config.append_jsonl(cyc, {"cycle_id": "old", "started": "2026-11-01T01:00:00Z", "mode": "FULL"})   # 모델 기록 전
+        config.append_jsonl(cyc, {"cycle_id": "new", "started": "2026-11-09T01:00:00Z", "mode": "FULL", "model": "claude-opus-5-5"})
+        for i, cid in enumerate(["old"] * 4 + ["new"] * 4):
+            up = i % 2 == 0
+            p = (0.7 if up else 0.3) if cid == "new" else (0.3 if up else 0.7)
+            config.append_jsonl(forecast.FORECASTS, {"id": f"f{i}", "cycle_id": cid, "code": "005930", "est_prob": p, "base_rate": 0.5,
+                                                     "edge_class": "earnings", "status": "up" if up else "down"})
+        bm = policy.by_model()
+        self.assertEqual(list(bm), ["sonnet-5-5", "opus-5-5"])          # 시작 순서
+        self.assertGreater(bm["sonnet-5-5"]["forecast"]["brier_delta"], 0)
+        self.assertLess(bm["opus-5-5"]["forecast"]["brier_delta"], 0)
+        self.assertEqual(bm["opus-5-5"]["forecast"]["n"], 4)
+

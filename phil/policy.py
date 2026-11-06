@@ -5,7 +5,7 @@
 """
 from collections import defaultdict
 
-from .config import FORECASTS, LEDGER, load_config, load_jsonl
+from .config import CYCLES_LOG, FORECASTS, LEDGER, load_config, load_jsonl
 
 
 def _rows():
@@ -36,6 +36,49 @@ def calibration_by_class():
     for r in _rows():
         g[r[3]].append(r)
     return {k: brier(v) for k, v in sorted(g.items())}
+
+
+LEGACY_MODEL = "claude-sonnet-5-5"   # 모델 기록을 남기기 전 사이클 (당시 설정값)
+
+
+def _short(m):
+    return (m or LEGACY_MODEL).replace("claude-", "")
+
+
+def cycle_models():
+    """cycle_id → 모델 이름. 모델 기록이 없는 옛 사이클은 당시 설정(Sonnet 5.5)."""
+    return {c["cycle_id"]: _short(c.get("model")) for c in load_jsonl(CYCLES_LOG) if c.get("cycle_id")}
+
+
+def by_model():
+    """모델별 예측 정확도와 매매 성적 — 어느 모델이 실제로 더 잘하는지 비교용.
+    예측·매매는 그것을 만든 사이클의 모델로 묶는다 (수동·규칙 매매는 제외)."""
+    cm = cycle_models()
+    fc, tr = defaultdict(list), defaultdict(list)
+    for r in load_jsonl(FORECASTS):
+        m = cm.get(r.get("cycle_id"))
+        if m and r["status"] in ("up", "down"):
+            fc[m].append((r["est_prob"], r["base_rate"], r["status"] == "up", r["edge_class"]))
+    for e in load_jsonl(LEDGER):
+        m = cm.get(e.get("cycle_id"))
+        if not m:
+            continue
+        if "calib" in e:
+            fc[m].append((e["est_prob"], e["base_rate"], e["calib"] == "up", e["edge_class"]))
+        if e["status"] == "closed":
+            tr[m].append(e)
+    first = {}
+    for c in load_jsonl(CYCLES_LOG):
+        if c.get("cycle_id") and c.get("started"):
+            first.setdefault(_short(c.get("model")), c["started"])
+    out = {}
+    for m in sorted(set(fc) | set(tr) | set(first), key=lambda k: first.get(k, "")):
+        rows = tr.get(m, [])
+        out[m] = {"since": first.get(m), "forecast": brier(fc.get(m, [])) or {"n": 0},
+                  "trades": {"n": len(rows), "wins": sum(1 for e in rows if e["pnl_krw"] > 0),
+                             "pnl_krw": sum(e["pnl_krw"] for e in rows),
+                             "avg_ret_pct": round(sum(e["ret_pct"] for e in rows) / len(rows), 2) if rows else None}}
+    return out
 
 
 def calibration_overall():
@@ -99,6 +142,7 @@ def summary():
         "edge_classes": cfg["policy"]["edge_classes"],
         "banned_edge_classes": banned_edge_classes(cfg),
         "calibration_by_edge_class": calibration_by_class(),
+        "by_model": by_model(),
         "sizing_by_accuracy": {k: size_factor(k, cfg)[2] for k in cfg["policy"]["edge_classes"] if k != "rule"},
         "risk_json": _risk_summary(),
     }

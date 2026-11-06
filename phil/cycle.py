@@ -220,6 +220,7 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
         if api_key:  # .env 에 API 키가 있으면 그걸로 (없으면 claude 구독 로그인)
             env["ANTHROPIC_API_KEY"] = api_key
         result["auth"] = "api_key" if api_key else "login"
+        result["model"] = load_config()["cycle"].get("model") or "default"   # init 이벤트가 오면 실제 모델로 덮어씀
         env["PYTHONIOENCODING"] = "utf-8"
         timeout = load_config()["cycle"].get("timeout_minutes", 40) * 60
         summary_line = None
@@ -248,6 +249,8 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
                 line = _summarize_event(ev)
                 if line:
                     log(line)
+                if ev.get("type") == "system" and ev.get("subtype") == "init" and ev.get("model"):
+                    result["model"] = ev["model"]
                 if ev.get("type") == "result":
                     result["cost_usd"] = ev.get("total_cost_usd")
                     for ln in (ev.get("result") or "").splitlines()[::-1]:

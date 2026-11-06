@@ -243,6 +243,14 @@ async function loadJournal() {
   const byCal = sc.calibration_by_edge_class || {}, banned = sc.banned_edge_classes || {};
   $("#fcSub").textContent = `예측 ${sc.forecasts?.total || 0}건 기록 · 정확도 측정 ${cal.n || 0}건` + (cal.n ? ` · 전체적으로 기저율보다 ${cal.brier_delta < 0 ? "더 정확" : "덜 정확"} (Δ ${cal.brier_delta}, 방향 적중 ${pct(cal.hit_rate)})` : "") + ". 기저율보다 못한 근거 유형은 엔진이 매수를 막아요.";
   const keys = [...new Set([...Object.keys(byCal), ...Object.keys(banned)])].sort((a, b) => (byCal[b]?.n || 0) - (byCal[a]?.n || 0));
+  const bm = sc.by_model || {};
+  $("#modelTable").innerHTML = Object.entries(bm).map(([m, v]) => {
+    const f = v.forecast || {}, t = v.trades || {};
+    const verdict = f.n ? (f.brier_delta < 0 ? `<span class="up">기저율보다 정확</span>` : `<span class="down">기저율보다 부정확</span>`) : `<span class="sub">정산된 예측 없음</span>`;
+    return `<div class="item"><div class="q">${esc(m)} <span class="sub">${v.since ? new Date(v.since).toLocaleDateString("ko-KR") + "부터" : ""}</span></div>
+      <div class="meta"><span>예측 ${f.n || 0}건 · ${verdict}${f.n ? ` (Δ ${f.brier_delta > 0 ? "+" : ""}${f.brier_delta.toFixed(4)}, 적중 ${pct(f.hit_rate)})` : ""}</span></div>
+      <div class="meta"><span>청산 ${t.n}건${t.n ? ` · 승 ${t.wins} · <span class="${ud(t.pnl_krw)}">${won(t.pnl_krw, 1)}</span> · 평균 ${sp(t.avg_ret_pct)}` : ""}</span></div></div>`;
+  }).join("") || `<div class="empty">아직 기록이 없습니다.</div>`;
   $("#catTable").innerHTML = keys.map((k) => { const c = byCal[k], b = banned[k];
     return `<div class="item"><div class="q">${esc(k)} ${b ? '<span class="chip bad">매수 금지</span>' : c && c.n >= 10 && c.brier_delta < 0 ? '<span class="chip good">기저율보다 정확</span>' : ""}</div>
     <div class="meta">${c ? `<span>${c.n}건</span><span class="${c.brier_delta < 0 ? "pos" : "neg"}">Δ ${c.brier_delta}</span><span>적중 ${pct(c.hit_rate)}</span>` : ""}${b ? `<span>${esc(b)}</span>` : ""}</div></div>`; }).join("") || `<div class="empty">장중에 사이클을 돌리면 예측이 쌓여요.</div>`;

@@ -70,6 +70,7 @@ def report(kospi_now=None):
         "by_edge_class": {k: _trade_stats(v) for k, v in sorted(by_class.items())},
         "calibration": policy.calibration_overall(),
         "calibration_by_edge_class": policy.calibration_by_class(),
+        "by_model": policy.by_model(),
         "banned_edge_classes": policy.banned_edge_classes(cfg),
         "verified_edge_classes": verified_edge_classes(by_class),
         "forecasts": {"total": len(fc), "open": sum(1 for r in fc if r["status"] == "open"),

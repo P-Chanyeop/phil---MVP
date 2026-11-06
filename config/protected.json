@@ -64,11 +64,11 @@
     }
   },
   "cycle": {
-    "model": "claude-sonnet-5-5",
+    "model": "claude-opus-5-5",
     "max_turns": 80,
     "timeout_minutes": 40,
     "post_close_time": "16:30",
-    "_comment": "model: claude-sonnet-5-5(기본, 장중 1회 약 $0.6) / claude-opus-5-5(약 $1.2) / 빈 문자열이면 Claude Code 기본값."
+    "_comment": "model: claude-opus-5-5(기본, 장중 1회 API 환산 약 $1.2) / claude-sonnet-5-5(약 $0.6) / 빈 문자열이면 Claude Code 기본값. 구독 로그인이면 추가 청구 없이 구독 사용량에서 차감. 사이클마다 실제 모델이 기록되고, 저널 탭에서 모델별 정확도를 비교한다."
   },
   "rules": {
     "_comment": "규칙 수명주기: 제안 → 백테스트 통과(그림자) → 실전 신호 검증 통과(실전) → 성적 나빠지면 은퇴. 승격은 엔진만 한다.",
