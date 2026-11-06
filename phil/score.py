@@ -71,12 +71,59 @@ def report(kospi_now=None):
         "calibration": policy.calibration_overall(),
         "calibration_by_edge_class": policy.calibration_by_class(),
         "by_model": policy.by_model(),
+        "days": day_results(),
+        "buy_gap": buy_gap(),
         "banned_edge_classes": policy.banned_edge_classes(cfg),
         "verified_edge_classes": verified_edge_classes(by_class),
         "forecasts": {"total": len(fc), "open": sum(1 for r in fc if r["status"] == "open"),
                       "settled": sum(1 for r in fc if r["status"] in ("up", "down"))},
         "equity_curve": curve,
     }
+
+
+def day_results():
+    """장 마감마다 계좌가 전날보다 늘었나 (이긴 날). 대기 자금·보유 평가 포함 전체 자산 기준, 실제 청구 비용 차감."""
+    from .config import DAILY
+    cfg = load_config()
+    rows = load_jsonl(DAILY)
+    prev, prev_b = cfg["sim_bankroll_krw"], 0.0
+    rate = cfg.get("usd_krw", 1450)
+    sub = claude_cost(cfg)["subscription"]
+    days = []
+    for r in rows:
+        billed = r.get("billed_usd_total", 0 if sub else r.get("cost_usd_total", 0)) or 0
+        pnl = r["equity"] - prev - (billed - prev_b) * rate
+        days.append({"date": r["date"], "pnl_krw": round(pnl), "pct": round(pnl / prev * 100, 2)})
+        prev, prev_b = r["equity"], billed
+    wins = [d for d in days if d["pnl_krw"] > 0]
+    streak = 0
+    for d in reversed(days):
+        if (d["pnl_krw"] > 0) == (days[-1]["pnl_krw"] > 0):
+            streak += 1
+        else:
+            break
+    return {"n": len(days), "win_days": len(wins),
+            "win_day_rate": round(len(wins) / len(days), 2) if days else None,
+            "avg_day_krw": round(sum(d["pnl_krw"] for d in days) / len(days)) if days else None,
+            "best": max(days, key=lambda d: d["pnl_krw"]) if days else None,
+            "worst": min(days, key=lambda d: d["pnl_krw"]) if days else None,
+            "streak": {"kind": "win" if days and days[-1]["pnl_krw"] > 0 else "loss", "n": streak} if days else None,
+            "recent": days[-10:]}
+
+
+def buy_gap():
+    """에이전트가 마지막으로 산 뒤 지난 거래일 수 (장 마감 기록 기준). 하락장이 아닌데 길면 소심해진 것."""
+    from .config import DAILY
+    from . import market
+    buys = [e for e in load_jsonl(LEDGER) if e["edge_class"] != "rule"]
+    last = market.kst_date(buys[-1]["ts"]) if buys else None
+    days = [r["date"] for r in load_jsonl(DAILY)]
+    gap = sum(1 for d in days if last is None or d > last)
+    rg = market.regime_now()
+    limit = load_config()["policy"].get("inactivity_alert_days", 3)
+    bear = bool(rg and rg["label"] == "하락장")
+    return {"last_buy_date": last, "trading_days_since": gap, "bear_market": bear,
+            "alert": gap >= limit and not bear, "limit": limit}
 
 
 def breakdown(prices=None):
@@ -183,7 +230,9 @@ def scorecard():
     cycles = load_jsonl(CYCLES_LOG)[-20:]
     paid = [c for c in cycles if c.get("cost_usd")]
     return {
-        "question_to_ask_yourself": "지금 방식이 비용을 빼고 돈을 벌고 있나? 아니면 무엇을 바꿀 것인가?",
+        "question_to_ask_yourself": "오늘 장이 끝났을 때 계좌가 늘었나? 지금 방식이 이긴 날을 늘리고 있나, 아니면 무엇을 바꿀 것인가?",
+        "day_results": day_results(),
+        "buy_gap": buy_gap(),
         "last_5_days": tuning.window(5), "last_10_days": tuning.window(10),
         "by_source": src,
         "by_edge_class": {k: bucket(v) for k, v in by_class.items()},

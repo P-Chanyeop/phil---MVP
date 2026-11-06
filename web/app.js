@@ -134,6 +134,8 @@ function renderState(S) {
   if (S.operator?.park_enabled === false) rows.push(stateRow("💤", "대기 자금 꺼짐 — 남는 현금은 그대로 둡니다"));
   else if (g.reason) rows.push(stateRow("💤", `대기 자금 <b>새로 안 넣음</b> — ${esc(g.reason)}${/하락장/.test(g.reason) ? " · 자산의 30% 까지로 줄입니다" : ""}`, "warnrow"));
   else rows.push(stateRow("💤", `대기 자금 투입 가능 — 남는 현금은 한 번에 자산의 25% 씩 코스피200 에 넣습니다${pk.qty ? ` (지금 ${won(pk.value_krw)})` : ""}`));
+  const bg = S.score?.buy_gap;
+  if (bg?.alert) rows.push(stateRow("💤", `${bg.trading_days_since}거래일째 매수 없음 — 하락장도 아닌데 Phil 이 안 사고 있습니다. 다음 회고에서 이유를 점검합니다`, "warnrow"));
   if (S.buy_pause) rows.push(stateRow("⛔", `안전장치 — ${esc(S.buy_pause)}`, "badrow"));
   else rows.push(stateRow("🛡️", "안전장치 대기 중 — 종목 기준 자산이 고점 대비 5% 빠지면 2거래일 신규 매수 중단"));
   if (tb.defense_level) rows.push(stateRow("🧯", `방어 모드 ${tb.defense_level}단계 — 매수 크기를 줄이고 기준을 높였습니다`, "warnrow"));
@@ -161,8 +163,10 @@ async function loadHome() {
   $("#sNet").textContent = sp(sc.return_after_cost_pct); $("#sNet").className = ud(sc.return_after_cost_pct);
   const cc0 = sc.claude_cost || {};
   $("#sNetSub").textContent = cc0.subscription && !cc0.billed_usd ? `구독이라 청구 없음 (환산 $${(cc0.total_usd || 0).toFixed(2)})` : cc0.billed_usd != null ? `Claude 청구 $${cc0.billed_usd.toFixed(2)}` : "";
-  $("#sWin").textContent = t.n ? pct(t.win_rate) : "—";
-  $("#sWinSub").textContent = t.n ? `청산 ${t.n}건, 평균 ${sp(t.avg_ret_pct)}` : "청산 없음";
+  const dy = sc.days || {};
+  $("#sWin").textContent = dy.n ? `${dy.win_days}/${dy.n}일` : "—";
+  $("#sWin").className = dy.n ? (dy.win_days * 2 >= dy.n ? "up" : "down") : "";
+  $("#sWinSub").textContent = (dy.n ? `하루 평균 ${won(dy.avg_day_krw, 1)}` : "장 마감 기록 없음") + (t.n ? ` · 매매 승률 ${pct(t.win_rate)} (${t.n}건)` : "");
   $("#sFc").textContent = `예측 ${sc.forecasts.total}건, 정산 ${cal.n || 0}건`;
   $("#sBrier").textContent = cal.n ? (cal.brier_delta < 0 ? "기저율보다 정확" : "기저율보다 부정확") : "—";
   $("#sBrier").className = cal.n ? (cal.brier_delta < 0 ? "up" : "down") : "";

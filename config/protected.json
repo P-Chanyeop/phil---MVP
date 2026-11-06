@@ -45,10 +45,10 @@
       "max_brier_delta": 0.01
     },
     "exploration": {
-      "_comment": "탐색 매수: 엣지가 min_edge 이상 ~ min_edge_vs_base_rate 미만인 후보를 작게 산다. 실제 매매 데이터를 쌓기 위한 것.",
+      "_comment": "탐색 매수: 엣지가 min_edge 이상 ~ min_edge_vs_base_rate 미만인 후보를 작게 산다. 실제 매매 데이터를 쌓기 위한 것. 하루 6건(2026-11-07 운영자 결정: 모의투자라 잃어도 되니 표본을 빨리 쌓는다). 탐색 매수의 반대 논리는 기록·채점용이고 매수 여부를 막는 기준이 아니다.",
       "min_edge": 0.02,
       "position_pct": 0.05,
-      "max_per_day": 3
+      "max_per_day": 6
     },
     "min_view_vs_base_rate": 0.02,
     "_comment_view": "예측은 기저율과 2%p 이상 다를 때만 기록 (의견 없는 예측은 학습에 쓸모없음).",
@@ -65,7 +65,9 @@
       "_comment_stale": "entry_filters 는 처음 본 날짜·당시 장세를 엔진이 기록. stale_days 가 지났거나 장세가 바뀐 필터는 '재검증 필요'로 표시하고 주간 감사에서 다시 본다."
     },
     "bear_case_min_chars": 30,
-    "_comment_bear_case": "에이전트 매수에는 반대 논리(--bear-case: 이미 가격에 반영됐을 이유·산 뒤 빠질 이유)가 필수. 회고에서 반대 논리가 맞았는지 채점한다."
+    "_comment_bear_case": "에이전트 매수에는 반대 논리(--bear-case: 이미 가격에 반영됐을 이유·산 뒤 빠질 이유)가 필수. 회고에서 반대 논리가 맞았는지 채점한다.",
+    "inactivity_alert_days": 3,
+    "_comment_inactivity": "하락장이 아닌데 에이전트 매수가 이 거래일 수만큼 없으면 화면·회고에 경고 (소심해지는 걸 감시)."
   },
   "cycle": {
     "model": "claude-opus-5-5",
@@ -228,7 +230,7 @@
       },
       "policy.exploration.max_per_day": {
         "min": 0,
-        "max": 5,
+        "max": 8,
         "label": "하루 탐색 매수 수",
         "int": true
       },

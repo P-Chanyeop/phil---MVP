@@ -112,14 +112,15 @@ class TestBuy(Tmp):
         e = self.buy(est=0.54)          # 엣지 ≈ 0.0375: 정규(0.05) 미만, 탐색(0.02) 이상
         self.assertTrue(e["exploration"])
         self.assertLessEqual(e["cost_krw"], 500_000)   # 자산의 5%
-        codes = ["000660", "035420", "051910"]
+        codes = ["000660", "035420", "051910", "005380", "000270", "068270", "105560"]
         uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ["005930"] + codes}
+        mock.patch("phil.naver.sector", lambda c: {"code": c, "name": c}).start()   # 업종 제한과 분리
         with mock.patch("phil.market.universe", lambda refresh=False: uni):
-            self.buy(est=0.54, code="000660")
-            self.buy(est=0.54, code="035420")
-            with self.assertRaises(ledger.Rejected):   # 하루 3건 한도
-                self.buy(est=0.54, code="051910")
-            big = self.buy(est=0.62, code="051910")    # 정규 매수는 한도와 무관
+            for c in codes[1:6]:
+                self.buy(est=0.54, code=c)
+            with self.assertRaises(ledger.Rejected):   # 하루 6건 한도
+                self.buy(est=0.54, code="000660")
+            big = self.buy(est=0.62, code="000660")    # 정규 매수는 한도와 무관
         self.assertFalse(big["exploration"])
         self.assertLessEqual(big["cost_krw"], 500_000)     # 미검증 근거 유형(정산 0건)은 자산의 5% 까지
         self.assertIn("미검증", big["size_notes"][0])
@@ -882,4 +883,22 @@ class TestVariantsAndFilterAges(Tmp):
         risk["entry_filters"] = risk["entry_filters"][:1]
         riskbook.filter_ages(risk, later)
         self.assertNotIn("B", config.load_json(self.d / "risk_meta.json", {}))   # 지운 필터는 기록에서도 지움
+
+
+class TestDayResults(Tmp):
+    def test_win_days_and_buy_gap(self):
+        from phil import score
+        mock.patch.object(config, "DAILY", self.d / "daily.jsonl").start()
+        for d, e in [("2026-11-02", 10_050_000), ("2026-11-03", 9_990_000), ("2026-11-04", 10_020_000), ("2026-11-05", 10_040_000)]:
+            config.append_jsonl(self.d / "daily.jsonl", {"date": d, "equity": e, "cost_usd_total": 0, "kospi": 100})
+        r = score.day_results()
+        self.assertEqual((r["n"], r["win_days"]), (4, 3))
+        self.assertEqual(r["worst"]["date"], "2026-11-03")
+        self.assertEqual(r["streak"], {"kind": "win", "n": 2})
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "횡보", "kospi_vs_ma60": 0}):
+            g = score.buy_gap()
+        self.assertEqual(g["trading_days_since"], 4)                 # 산 적 없음
+        self.assertTrue(g["alert"])
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "하락장", "kospi_vs_ma60": -9}):
+            self.assertFalse(score.buy_gap()["alert"])               # 하락장에선 안 사는 게 정상
 
