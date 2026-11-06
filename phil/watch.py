@@ -110,8 +110,10 @@ def _park_actions(now, prices):
         return
     entries = ledger.read_ledger()
     r = park.rebalance(ledger.cash(entries), ledger.equity(entries, prices=prices), now)
-    if r:
+    if r and r["side"] == "buy":
         event("park", f"💤 남는 현금 {r['amount']:,}원 → 코스피200 ETF {r['qty']}주")
+    elif r:
+        event("park", f"💤 하락장: 코스피200 ETF {r['qty']}주 매도 → 현금 {r['amount']:,}원 (대기 자금을 자산의 30% 까지로)")
 
 
 def snapshot_equity(now, prices):
@@ -123,7 +125,8 @@ def snapshot_equity(now, prices):
     eq = ledger.equity(prices=prices)
     append_jsonl(INTRADAY, {"date": now.date().isoformat(), "t": now.strftime("%H:%M"),
                             "equity": eq, "kospi": kospi})
-    msg = safety.check(eq, now)
+    pk = park.summary(prices.get(load_config()["park"]["code"]))
+    msg = safety.check(eq, now, park_total_pnl=pk.get("total_pnl_krw", 0))
     if msg:
         event("safety", msg)
         _say(msg)

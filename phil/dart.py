@@ -52,6 +52,14 @@ def fetch_today(now=None):
     return out
 
 
+def wanted(title, cfg=None):
+    """주가 근거가 될 만한 공시 제목인가 (키워드 포함 + 제외어 미포함)."""
+    cfg = cfg or load_config()["dart"]
+    if any(x in title for x in cfg.get("exclude_keywords", [])):
+        return False
+    return any(k in title for k in cfg["keywords"])
+
+
 def poll(now=None):
     """새 주요 공시 목록 (유니버스 종목 + 키워드). 기록도 남긴다."""
     now = now or now_kst()
@@ -64,7 +72,7 @@ def poll(now=None):
         title = it.get("report_nm", "").strip()
         if code not in uni or it.get("rcept_no") in seen:
             continue
-        if not any(k in title for k in cfg["keywords"]):
+        if not wanted(title, cfg):
             continue
         row = {"ts": iso(), "rcept_no": it["rcept_no"], "code": code, "name": uni[code]["name"],
                "title": title, "filer": it.get("flr_nm"), "date": it.get("rcept_dt"),

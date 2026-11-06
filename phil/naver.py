@@ -84,6 +84,19 @@ def info(code):
     return out
 
 
+def sector(code):
+    """업종 (네이버 업종 분류). {"code": "278", "name": "반도체와반도체장비"} — 없으면 None."""
+    d = _get(f"{M}/stock/{code}/integration")
+    ic = str(d.get("industryCode") or "").strip()
+    if not ic:
+        return None
+    try:
+        g = _get(f"{M}/stocks/industry/{ic}", {"page": 1, "pageSize": 1}).get("groupInfo") or {}
+    except DataError:
+        g = {}
+    return {"code": ic, "name": g.get("name") or ic}
+
+
 def index_quote(symbol="KOSPI"):
     d = _get(f"{M}/index/{symbol}/basic")
     return {"symbol": symbol, "name": d.get("stockName"), "price": num(d.get("closePrice")),

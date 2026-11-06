@@ -1,10 +1,14 @@
 {
-  "_comment": "AGENT-EDITABLE. 에이전트 자신의 정책. 엔진 정책(`python tools.py policy`)이 항상 우선.",
+  "_comment": "AGENT-EDITABLE. 에이전트 자신의 리스크 규칙 — 엔진이 매수 때 강제한다 (엔진 정책 `python tools.py policy` 보다 보수적인 방향으로만). entry_filters: 조건을 전부 만족하면 매수 금지. feature 는 `python tools.py features` + change_today·gap_today.",
   "min_edge_vs_base_rate": 0.05,
   "default_stop_pct": 0.04,
-  "position_size_pct_of_equity": 0.08,
+  "position_size_pct_of_equity": 0.2,
   "max_same_sector": 2,
   "max_new_buys_per_cycle": 3,
   "forecasts_per_cycle_target": 12,
-  "avoid_if_up_today_pct": 8
+  "avoid_if_up_today_pct": 8,
+  "entry_filters": [
+    {"name": "급락 후 반등일 진입 금지", "conditions": [["ret_20d", "<", -15], ["change_today", ">", 5]],
+     "why": "운영자 초기안 — 급락 후 반등일에 들어간 같은 업종 탐색 매수 2건이 연속 손절(갭으로 손절폭 초과). 표본이 쌓여 득이 없으면 지울 것"}
+  ]
 }

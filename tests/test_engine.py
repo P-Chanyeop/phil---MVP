@@ -48,6 +48,18 @@ class Tmp(unittest.TestCase):
                                                   "market_status": "OPEN", "tradable": True}).start()
         # 기저율 0.5 가 나오도록 오르내림 반복
         mock.patch("phil.naver.daily_bars", lambda c, n=260: bars("2026-01-01", [100, 101] * 100)).start()
+        mock.patch("phil.naver.index_quote", lambda s="KOSPI": {"symbol": s, "name": s, "price": 5000.0,
+                                                               "change_pct": 0.0, "market_status": "OPEN"}).start()
+        mock.patch("phil.naver.sector", lambda c: {"code": "278", "name": "반도체와반도체장비"}).start()
+        mock.patch.object(config, "SECTORS", self.d / "sectors.json").start()
+        mock.patch.object(market, "_REGIME", {"t": 0.0, "value": None}).start()
+        (self.d / "strategy").mkdir()
+        mock.patch("phil.riskbook.STRATEGY", self.d / "strategy").start()
+
+    def risk(self, **kw):
+        """테스트용 strategy/risk.json"""
+        import json
+        (self.d / "strategy" / "risk.json").write_text(json.dumps(kw), encoding="utf-8")
 
     def tearDown(self):
         mock.patch.stopall()
@@ -109,7 +121,59 @@ class TestBuy(Tmp):
                 self.buy(est=0.54, code="051910")
             big = self.buy(est=0.62, code="051910")    # 정규 매수는 한도와 무관
         self.assertFalse(big["exploration"])
-        self.assertGreater(big["cost_krw"], 1_000_000)
+        self.assertLessEqual(big["cost_krw"], 500_000)     # 미검증 근거 유형(정산 0건)은 자산의 5% 까지
+        self.assertIn("미검증", big["size_notes"][0])
+
+    def _settled_forecasts(self, edge_class, n, good):
+        """정산된 예측 n건: good 이면 기저율보다 정확(맞힌 쪽에 0.7), 아니면 부정확(틀린 쪽에 0.7)."""
+        for i in range(n):
+            up = i % 2 == 0
+            p = (0.7 if up else 0.3) if good else (0.3 if up else 0.7)
+            config.append_jsonl(forecast.FORECASTS, {"id": f"f{i}", "code": "005930", "est_prob": p, "base_rate": 0.5,
+                                                     "edge_class": edge_class, "status": "up" if up else "down"})
+
+    def test_sizing_follows_accuracy(self):
+        self._settled_forecasts("earnings", 12, good=True)
+        e = self.buy(est=0.62)
+        self.assertGreater(e["cost_krw"], 1_500_000)        # 검증된 유형은 원래 크기(20%)
+        self.assertIn("정확", e["size_notes"][0])
+        self._settled_forecasts("news-flow", 12, good=False)
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ("005930", "000660")}
+        with mock.patch("phil.market.universe", lambda refresh=False: uni):
+            w = self.buy(est=0.62, code="000660", edge_class="news-flow")
+        self.assertLessEqual(w["cost_krw"], 1_000_000)      # 부정확한 유형은 절반(10%)
+        self.assertIn("x0.5", w["size_notes"][0])
+
+    def test_risk_json_enforced(self):
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ("005930", "000660", "035420")}
+        mock.patch("phil.market.universe", lambda refresh=False: uni).start()
+        self.risk(max_same_sector=1, avoid_if_up_today_pct=8, position_size_pct_of_equity=0.03)
+        e = self.buy()
+        self.assertEqual(e["sector"]["name"], "반도체와반도체장비")
+        self.assertLessEqual(e["cost_krw"], 300_000)         # risk.json 크기 상한(3%)이 엔진(20%)보다 작으면 적용
+        with self.assertRaises(ledger.Rejected) as cm:       # 같은 업종 2번째
+            self.buy(code="000660")
+        self.assertIn("같은 업종", str(cm.exception))
+        self.risk(avoid_if_up_today_pct=8)
+        with mock.patch("phil.naver.quote", lambda c: {"code": c, "name": c, "price": 100.0, "change_pct": 9.5,
+                                                       "market_status": "OPEN", "tradable": True}):
+            with self.assertRaises(ledger.Rejected) as cm:   # 오늘 +9.5% 추격
+                self.buy(code="000660")
+            self.assertIn("추격", str(cm.exception))
+        self.risk(entry_filters=[{"name": "급락 후 반등일", "conditions": [["ret_20d", "<", -15], ["change_today", ">", 5]]}])
+        crash = bars("2026-01-01", [100] * 181 + [80] * 19)   # 20일 전 100 → 지금 84 (-16%), 오늘 +7.5%
+        with mock.patch("phil.naver.daily_bars", lambda c, n=260: crash), \
+                mock.patch("phil.naver.quote", lambda c: {"code": c, "name": c, "price": 84.0, "change_pct": 7.5,
+                                                          "market_status": "OPEN", "tradable": True}):
+            with self.assertRaises(ledger.Rejected) as cm:
+                self.buy(code="000660")
+            self.assertIn("급락 후 반등일", str(cm.exception))
+        self.risk(entry_filters=[{"name": "x", "conditions": [["ret_20d", "<", -15]]}])
+        self.buy(code="035420")                              # 조건에 안 걸리면 통과
+        self.risk(max_same_sector="abc", position_size_pct_of_equity=5.0)   # 엉터리 값·느슨한 값은 무시
+        (self.d / "strategy" / "risk.json").write_text("{broken", encoding="utf-8")
+        e = self.buy(code="000660")                          # 깨진 파일이면 강제 안 함 (기록만)
+        self.assertIn("읽을 수 없음", e["size_notes"][0])
 
     def test_limits(self):
         for kw in ({"horizon_days": 6}, {"stop_pct": 0.01}, {"stop_pct": 0.2},
@@ -363,8 +427,9 @@ class TestSafety(Tmp):
     def test_drawdown_pause_and_resume(self):
         now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)   # 월요일
         self.assertIsNone(safety.check(10_000_000, now))
-        self.assertIsNone(safety.check(9_200_000, now))      # -8%
-        msg = safety.check(8_950_000, now)                   # -10.5%
+        self.assertIsNone(safety.check(9_200_000, now, park_total_pnl=-700_000))   # 지수 하락분 빼면 -1%
+        self.assertIsNone(safety.check(9_600_000, now))      # -4%
+        msg = safety.check(9_450_000, now)                   # -5.5%
         self.assertIn("중단", msg)
         self.assertTrue(safety.paused(now)[0])
         self.assertFalse(safety.paused(dt.datetime(2026, 11, 5, 10, 0, tzinfo=KST))[0])   # 2거래일 뒤 풀림
@@ -384,6 +449,13 @@ class TestDart(Tmp):
             again = dart.poll()
         self.assertEqual([r["rcept_no"] for r in new], ["1"])
         self.assertEqual(again, [])
+
+    def test_routine_reports_do_not_wake_cycle(self):
+        self.assertTrue(dart.wanted("연결재무제표기준영업(잠정)실적(공정공시)"))
+        self.assertTrue(dart.wanted("자기주식취득결정"))
+        self.assertFalse(dart.wanted("증권발행실적보고서"))          # 정기 보고 — 주가 근거 없음
+        self.assertFalse(dart.wanted("결산실적공시예고(안내공시)"))
+        self.assertFalse(dart.wanted("기업설명회(IR)개최(안내공시)"))
 
 
 class TestDartDocument(Tmp):
@@ -482,17 +554,57 @@ class TestPark(Tmp):
     def test_park_idle_cash_and_fund_buys(self):
         now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)
         r = park.rebalance(ledger.cash([]), ledger.equity([]), now)
-        self.assertGreater(r["qty"], 90_000)                     # 1,000만 중 95% 투입
-        self.assertLess(ledger.cash([]), 600_000)
+        self.assertAlmostEqual(r["qty"], 25_000, delta=100)      # 한 번에 자산의 25% 까지만 (분할 투입)
+        self.assertGreater(ledger.cash([]), 7_000_000)
         eq0 = ledger.equity([])
         self.assertAlmostEqual(eq0, 10_000_000, delta=20_000)    # 비용만큼만 줄어듦
         self.assertIsNone(park.rebalance(ledger.cash([]), eq0, now))   # 한 시간 안엔 다시 안 함
+        later = now + dt.timedelta(hours=1, minutes=1)
+        with mock.patch("phil.park._minutes_since", lambda ts: 61):
+            for _ in range(3):
+                park.rebalance(ledger.cash([]), ledger.equity([]), later)
+        self.assertLess(ledger.cash([]), 600_000)                # 네 번에 걸쳐 95% 까지
+        config.save_json(park.PARK, {"qty": 98_000, "cost_krw": 9_800_000, "net_out": 9_800_000,
+                                     "last_price": 100.0, "trades": []})
         e = ledger.buy("005930", 0.62, 3, 0.04, None, "earnings", "대기 자금에서 꺼내 쓰는 매수 테스트")
-        self.assertGreater(e["cost_krw"], 1_500_000)             # 현금이 모자라도 ETF 를 팔아 매수
+        self.assertGreater(e["cost_krw"], 400_000)               # 현금 20만뿐이어도 ETF 를 팔아 매수
         self.assertGreaterEqual(ledger.cash(ledger.read_ledger()), 0)
         self.etf = 110.0                                         # 시장 +10% → 대기 자금도 오름
         park.mark(110.0)                                         # (감시 루프가 1분마다 시세 반영)
         self.assertGreater(ledger.equity(ledger.read_ledger()), eq0 + 500_000)
+
+    def test_gate_blocks_in_bear_market_and_crash_day(self):
+        now = dt.datetime(2026, 11, 2, 10, 0, tzinfo=KST)
+        bear = {"date": "2026-11-02", "label": "하락장", "kospi_vs_ma60": -8.0}
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: bear):
+            self.assertIn("하락장", park.gate(now))
+            self.assertIsNone(park.rebalance(ledger.cash([]), ledger.equity([]), now))   # 안 넣음
+        self.assertEqual(park.state()["qty"], 0)
+        flat = {"date": "2026-11-02", "label": "횡보", "kospi_vs_ma60": 0.5}
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: flat), \
+                mock.patch("phil.naver.index_quote", lambda s="KOSPI": {"price": 5000.0, "change_pct": -2.4,
+                                                                        "market_status": "OPEN"}):
+            self.assertIn("급락일", park.gate(now))
+            self.assertIsNone(park.rebalance(ledger.cash([]), ledger.equity([]), now))
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: flat):
+            self.assertIsNone(park.gate(now))
+            self.assertIsNotNone(park.rebalance(ledger.cash([]), ledger.equity([]), now))
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: None):
+            self.assertIn("판정 불가", park.gate(now))              # 시세 실패 = 넣지 않음
+        with mock.patch("phil.safety.paused", lambda now=None: (True, "테스트")):
+            self.assertIn("안전장치", park.gate(now))
+
+    def test_bear_market_reduces_park_to_cap(self):
+        now = dt.datetime(2026, 11, 3, 10, 0, tzinfo=KST)
+        config.save_json(park.PARK, {"qty": 76_000, "cost_krw": 7_600_000, "net_out": 7_600_000,
+                                     "last_price": 100.0, "trades": []})                     # 자산의 76%
+        bear = {"date": "2026-11-03", "label": "하락장", "kospi_vs_ma60": -8.0}
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: bear):
+            r = park.rebalance(ledger.cash([]), ledger.equity([]), now)
+            self.assertEqual(r["side"], "sell")
+            self.assertAlmostEqual(park.state()["qty"], 30_000, delta=100)                   # 30% 까지로
+            self.assertIsNone(park.rebalance(ledger.cash([]), ledger.equity([]), now + dt.timedelta(hours=2)))  # 하루 한 번
+        self.assertGreater(ledger.cash([]), 6_000_000)                                       # 나머지는 현금
 
 
 class TestParkHalt(Tmp):
@@ -518,7 +630,7 @@ class TestParkHalt(Tmp):
         self.assertIn("ok/HALT", evs[0]["msg"])
 
     def test_buy_needing_park_cash_is_rejected_cleanly(self):
-        config.save_json(park.PARK, {"qty": 95_000, "cost_krw": 9_500_000, "net_out": 9_500_000,
+        config.save_json(park.PARK, {"qty": 98_000, "cost_krw": 9_800_000, "net_out": 9_800_000,
                                      "last_price": 100.0, "trades": []})
         with self.assertRaises(ledger.Rejected) as cm:
             ledger.buy("005930", 0.62, 3, 0.04, None, "earnings", "대기 자금이 묶였을 때 매수 테스트")
@@ -594,6 +706,25 @@ class TestTuning(Tmp):
         self.days([9_800_000] + [9_900_000] * 10)                # 회복 +1%
         tuning.check_defense()
         self.assertAlmostEqual(config.load_config()["limits"]["max_position_pct"], base)
+
+    def test_window_uses_available_days_early_on(self):
+        self.days([10_000_000, 9_950_000, 9_900_000])              # 기록 3일뿐 (2거래일 구간)
+        self.assertIsNone(tuning.window(10))                       # 최소 3거래일 구간은 있어야
+        self.days([10_000_000, 9_950_000, 9_900_000, 9_850_000])
+        w = tuning.window(10)
+        self.assertTrue(w["partial"])
+        self.assertEqual(w["days"], 3)
+        self.assertAlmostEqual(w["after_cost_pct"], -1.5, places=1)
+        self.assertTrue(tuning.check_defense())                    # 시작 직후에도 방어 모드가 켜질 수 있다
+
+    def test_window_excludes_park_etf_swings(self):
+        rows = [{"date": f"2026-10-{i + 1:02d}", "equity": e, "cost_usd_total": 0, "kospi": 100, "park_total_pnl": p}
+                for i, (e, p) in enumerate([(10_000_000, 0)] + [(9_500_000, -520_000)] * 10)]   # 지수만 빠짐, 종목은 +2만
+        config.dump_jsonl(self.d / "daily.jsonl", rows)
+        w = tuning.window(10)
+        self.assertTrue(w["ex_park"])
+        self.assertGreater(w["after_cost_pct"], 0)
+        self.assertEqual(tuning.check_defense(), [])               # 방어 모드 안 켜짐
 
     def test_cost_saver(self):
         config.save_operator_state({"loop_minutes": 120})

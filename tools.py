@@ -45,6 +45,21 @@ def out(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=1))
 
 
+def _log_rejection(a, err):
+    """거부된 매수·예측을 남긴다 — 화면에서 '왜 안 샀는지' 를 보여 주기 위해."""
+    try:
+        import os
+        from phil.config import DECISIONS, append_jsonl, iso
+        uni = market.universe()
+        append_jsonl(DECISIONS, {"ts": iso(), "cycle_id": os.environ.get("PHIL_CYCLE_ID") or "manual",
+                                 "kind": a.cmd, "code": a.code, "name": (uni.get(a.code) or {}).get("name") or a.code,
+                                 "est_prob": a.est_prob, "edge_class": a.edge_class,
+                                 "why": getattr(a, "rationale", None) or getattr(a, "note", "") or "",
+                                 "reason": str(err)[:300]})
+    except Exception:  # noqa: BLE001 — 기록 실패가 명령을 막으면 안 된다
+        pass
+
+
 def fail(msg):
     print(f"REJECTED: {msg}")
     sys.exit(2)
@@ -153,6 +168,8 @@ def main():
             out({"sold": e["id"], "name": e["name"], "ret_pct": e["ret_pct"], "pnl_krw": e["pnl_krw"]})
         elif a.cmd == "features":
             out({"features": research.FEATURES, "operators": list(research.OPS),
+                 "entry_filter_extra": ["change_today (당일 등락률 %)", "gap_today (시초가 갭 %)"],
+                 "entry_filters": "strategy/risk.json 의 entry_filters 에 같은 conditions 형식으로 적으면 엔진이 매수를 막는다",
                  "spec_fields": {"conditions": "[[지표, 연산자, 값], ...] 1~6개 (모두 만족)",
                                  "horizon": "보유 거래일 1~5", "stop": "손절폭 0.02~0.10",
                                  "target": "목표 수익률 또는 null", "max_per_day": "하루 최대 신호 1~5 (기본 3)",
@@ -196,6 +213,7 @@ def main():
     except (research.SpecError, rules.RuleError, dart.DartError, tuning.TuneError) as err:
         fail(err)
     except (ledger.Rejected, forecast.Rejected) as err:
+        _log_rejection(a, err)
         fail(err)
     except naver.DataError as err:
         fail(f"시세 조회 실패: {err}")

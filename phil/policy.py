@@ -62,6 +62,22 @@ def check_edge_class(edge_class, cfg=None):
     return None
 
 
+def size_factor(edge_class, cfg=None):
+    """근거 유형의 예측 정확도에 따라 정규 매수 크기를 조절.
+    반환 (max_pct 또는 None, factor, 설명). max_pct 가 있으면 그 비율(자산 대비)로 상한, factor 는 곱."""
+    cfg = cfg or load_config()
+    sa = cfg["policy"].get("sizing_by_accuracy")
+    if not sa:
+        return None, 1.0, ""
+    s = calibration_by_class().get(edge_class)
+    n = s["n"] if s else 0
+    if n < sa["min_n"]:
+        return sa["unproven_pct"], 1.0, f"미검증 근거 유형 '{edge_class}' (정산 {n}건 < {sa['min_n']}) → 자산의 {sa['unproven_pct']:.0%} 까지"
+    if s["brier_delta"] > 0:
+        return None, sa["worse_factor"], f"'{edge_class}' 는 기저율보다 부정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 크기 x{sa['worse_factor']}"
+    return None, 1.0, f"'{edge_class}' 기저율보다 정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 원래 크기"
+
+
 def summary():
     cfg = load_config()
     lim = cfg["limits"]
@@ -77,8 +93,20 @@ def summary():
             f"매매·예측은 평일 {lim['trade_start']}~{lim['trade_end']} 장중에만",
             "유니버스: 코스피 시총 상위 200 + 코스닥 상위 100 (우선주·스팩 제외)",
             "비용: 매수·매도 수수료 0.015%, 슬리피지 0.05%, 매도 시 증권거래세 0.20%",
+            "근거 유형별 정확도 → 매수 크기: 정산 10건 미만 유형은 자산의 5% 까지, 기저율보다 부정확한 유형은 절반",
+            "strategy/risk.json 의 max_same_sector·avoid_if_up_today_pct·entry_filters·크기 상한을 엔진이 강제 (더 보수적인 방향만)",
         ],
         "edge_classes": cfg["policy"]["edge_classes"],
         "banned_edge_classes": banned_edge_classes(cfg),
         "calibration_by_edge_class": calibration_by_class(),
+        "sizing_by_accuracy": {k: size_factor(k, cfg)[2] for k in cfg["policy"]["edge_classes"] if k != "rule"},
+        "risk_json": _risk_summary(),
     }
+
+
+def _risk_summary():
+    try:
+        from . import riskbook
+        return riskbook.summary()
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:100]}

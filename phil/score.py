@@ -78,6 +78,29 @@ def report(kospi_now=None):
     }
 
 
+def breakdown(prices=None):
+    """손익 분해 — 어디서 벌고 잃었나. 합계 = 자산 − 시작 자금.
+    종목 실현 + 종목 평가 + 대기 자금(ETF, 실현 포함) = 비용 전 손익. 거기서 Claude 비용을 뺀 것이 진짜."""
+    from . import park
+    from .ledger import sell_proceeds
+    cfg = load_config()
+    entries = load_jsonl(LEDGER)
+    closed = [e for e in entries if e["status"] == "closed"]
+    opens = [e for e in entries if e["status"] == "open"]
+    realized = sum(e["pnl_krw"] for e in closed)
+    unreal = 0
+    for e in opens:
+        p = (prices or {}).get(e["code"]) or e.get("last_price") or e["entry_price"]
+        unreal += sell_proceeds(p, e["qty"], cfg["costs"])[1] - e["cost_krw"]
+    pk = park.summary((prices or {}).get(cfg["park"]["code"]))
+    park_pnl = pk.get("total_pnl_krw", 0)
+    cost = claude_cost(cfg)["total_krw"]
+    pre = realized + unreal + park_pnl
+    return {"stock_realized_krw": realized, "stock_unrealized_krw": unreal, "stock_total_krw": realized + unreal,
+            "park_krw": park_pnl, "pre_cost_krw": pre, "claude_cost_krw": cost, "net_krw": pre - cost,
+            "closed_n": len(closed), "open_n": len(opens), "park_value_krw": pk.get("value_krw", 0)}
+
+
 def verified_edge_classes(by_class=None):
     """나중에 실거래를 붙일 때 기준: 청산 10건 이상, 수익, 기저율보다 정확."""
     if by_class is None:

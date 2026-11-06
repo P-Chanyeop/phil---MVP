@@ -22,8 +22,9 @@
     "horizon_days_max": 5,
     "stop_pct_min": 0.02,
     "stop_pct_max": 0.1,
-    "trade_start": "09:05",
-    "trade_end": "15:15"
+    "trade_start": "09:30",
+    "trade_end": "15:15",
+    "_comment_trade_start": "09:30: 시초가 갭·개장 직후 변동이 가장 큰 30분은 매매하지 않는다 (손절 기록 5건 중 2건이 09:06 매수)."
   },
   "policy": {
     "_comment": "에이전트 확률이 그 종목의 과거 기저율(최근 250거래일에서 N일 뒤 상승한 비율)보다 min_edge 이상 높을 때만 매수. 확률은 'N거래일 뒤 종가 > 매수가' 에 대한 것.",
@@ -50,7 +51,17 @@
       "max_per_day": 3
     },
     "min_view_vs_base_rate": 0.02,
-    "_comment_view": "예측은 기저율과 2%p 이상 다를 때만 기록 (의견 없는 예측은 학습에 쓸모없음)."
+    "_comment_view": "예측은 기저율과 2%p 이상 다를 때만 기록 (의견 없는 예측은 학습에 쓸모없음).",
+    "sizing_by_accuracy": {
+      "_comment": "근거 유형별 예측 정확도(brier Δ, 매매 calib 포함)를 매수 크기에 반영. 정산 min_n 건 미만인 유형은 정규 매수도 unproven_pct 까지만(미검증). min_n 이상인데 기저율보다 부정확(Δ > 0)이면 크기 x worse_factor. 기저율보다 정확하면 원래 크기.",
+      "min_n": 10,
+      "unproven_pct": 0.05,
+      "worse_factor": 0.5
+    },
+    "risk_json": {
+      "_comment": "strategy/risk.json(에이전트가 고침)을 엔진이 매수 때 강제한다 — 엔진 한도보다 더 보수적인 방향으로만. 지원: max_same_sector, avoid_if_up_today_pct, position_size_pct_of_equity, max_new_buys_per_cycle, entry_filters(조건에 맞으면 매수 금지: [{\"name\":..., \"conditions\":[[feature, op, value],...]}], feature 는 tools.py features 참고 + change_today).",
+      "enforce": true
+    }
   },
   "cycle": {
     "model": "claude-sonnet-5-5",
@@ -94,12 +105,12 @@
     }
   },
   "safety": {
-    "_comment": "자산이 최근 고점 대비 max_drawdown_pct 이상 빠지면 pause_days 거래일 동안 신규 매수 중단.",
-    "max_drawdown_pct": 10.0,
+    "_comment": "종목 포지션 기준 자산(대기 자금 ETF 의 등락 제외)이 최근 고점 대비 max_drawdown_pct 이상 빠지면 pause_days 거래일 동안 신규 매수 중단. 지수 하락으로 멈추는 일은 대기 자금 gate 가 따로 맡는다.",
+    "max_drawdown_pct": 5.0,
     "pause_days": 2
   },
   "dart": {
-    "_comment": ".env 의 PHIL_DART_API_KEY 가 있을 때만. 주요 공시가 뜨면 사이클을 앞당겨 깨운다.",
+    "_comment": ".env 의 PHIL_DART_API_KEY 가 있을 때만. 주요 공시가 뜨면 사이클을 앞당겨 깨운다. keywords 중 하나를 포함하고 exclude_keywords 는 포함하지 않는 제목만 (정기 보고성 공시로 사이클을 깨우지 않기 위해).",
     "poll_minutes": 3,
     "min_gap_minutes": 30,
     "max_event_cycles_per_day": 4,
@@ -108,7 +119,6 @@
       "공급계약",
       "자기주식",
       "잠정",
-      "실적",
       "유상증자",
       "무상증자",
       "최대주주",
@@ -118,10 +128,19 @@
       "수주",
       "특허",
       "임상"
+    ],
+    "exclude_keywords": [
+      "증권발행실적보고서",
+      "결산실적공시예고",
+      "기업설명회",
+      "증권신고서",
+      "투자설명서",
+      "일괄신고",
+      "기타경영사항(자율공시)"
     ]
   },
   "park": {
-    "_comment": "놀고 있는 현금을 코스피200 ETF 에 넣어 둔다. 종목을 살 때 필요한 만큼 엔진이 팔아서 쓴다. ETF 는 증권거래세 면제.",
+    "_comment": "놀고 있는 현금을 코스피200 ETF 에 넣어 둔다. 종목을 살 때 필요한 만큼 엔진이 팔아서 쓴다. ETF 는 증권거래세 면제. regime_gate: 하락장(코스피 60일선 아래)·코스피 급락일(kospi_day_drop_pct 이하)·안전장치 중에는 넣지 않음. max_tranche_pct: 한 번(rebalance_minutes 마다)에 넣는 최대량(자산 대비). bear_max_pct: 하락장에서 대기 자금 상한(자산 대비), 넘치면 하루 한 번 줄임.",
     "code": "069500",
     "name": "KODEX 200",
     "cash_reserve_pct": 0.05,
@@ -130,7 +149,11 @@
     "window": [
       "09:10",
       "15:10"
-    ]
+    ],
+    "regime_gate": true,
+    "kospi_day_drop_pct": -2.0,
+    "max_tranche_pct": 0.25,
+    "bear_max_pct": 0.3
   },
   "usd_krw": 1450,
   "_comment_usd_krw": "Claude 비용(달러)을 원화로 바꿀 때 쓰는 환율. 대략값이면 충분.",

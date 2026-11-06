@@ -44,25 +44,37 @@ def record_daily(now=None):
         kospi = naver.index_quote("KOSPI")["price"]
     except Exception:  # noqa: BLE001
         kospi = None
+    from . import park
     row = {"date": day, "equity": ledger.equity(), "cost_usd_total": score.claude_cost()["total_usd"],
-           "kospi": kospi}
+           "kospi": kospi, "park_total_pnl": park.summary().get("total_pnl_krw", 0)}
     append_jsonl(DAILY, row)
     return row
 
 
-def window(days, end_index=None):
-    """최근 days 거래일 성과: (비용 전 손익, 비용, 비용 후 수익률 %) — 데이터 부족이면 None."""
+MIN_WINDOW_DAYS = 3
+
+
+def window(days, end_index=None, min_days=MIN_WINDOW_DAYS):
+    """최근 days 거래일 성과 (종목 기준: 대기 자금 ETF 손익 제외): (비용 전 손익, 비용, 비용 후 수익률 %).
+    기록이 days 보다 짧으면 있는 만큼(최소 min_days 거래일)으로 계산하고 partial=True 를 붙인다
+    — 시작 직후 2주 동안 방어 모드·비용 절감이 전부 꺼져 있지 않도록. min_days 도 안 되면 None."""
     rows = load_jsonl(DAILY)
     if end_index is not None:
         rows = rows[:end_index + 1]
-    if len(rows) < days + 1:
+    if len(rows) < min_days + 1:
         return None
-    a, b = rows[-days - 1], rows[-1]
+    partial = len(rows) < days + 1
+    span = min(days, len(rows) - 1)
+    a, b = rows[-span - 1], rows[-1]
     rate = load_base_config().get("usd_krw", 1450)
-    pnl = b["equity"] - a["equity"]
+    # 종목 기준(대기 자금 ETF 손익 제외) — 지수가 빠진 것 때문에 방어 모드가 켜지지 않도록. 옛 기록은 전체 자산.
+    ex = "park_total_pnl" in a and "park_total_pnl" in b
+    ea, eb = (a["equity"] - a["park_total_pnl"], b["equity"] - b["park_total_pnl"]) if ex else (a["equity"], b["equity"])
+    pnl = eb - ea
     cost = (b["cost_usd_total"] - a["cost_usd_total"]) * rate
-    return {"from": a["date"], "to": b["date"], "pnl_krw": round(pnl), "cost_krw": round(cost),
-            "after_cost_pct": round((pnl - cost) / a["equity"] * 100, 3)}
+    return {"from": a["date"], "to": b["date"], "days": span, "partial": partial, "ex_park": ex,
+            "pnl_krw": round(pnl), "cost_krw": round(cost),
+            "after_cost_pct": round((pnl - cost) / ea * 100, 3)}
 
 
 # ───────────── 1) 방어 모드 ─────────────

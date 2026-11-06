@@ -124,6 +124,38 @@ def scan(sort="value", query=None, limit=40, market=None):
     return rows[:limit]
 
 
+_REGIME = {"t": 0.0, "value": None}
+
+
+def regime_now(max_age_sec=1800):
+    """지금 장세 (research.regime) — 30분 캐시. 조회 실패면 마지막 값(없으면 None)."""
+    import time
+    if time.time() - _REGIME["t"] < max_age_sec and _REGIME["value"] is not None:
+        return _REGIME["value"]
+    try:
+        from .research import regime
+        _REGIME.update(t=time.time(), value=regime(naver.daily_bars("KOSPI", 120)))
+    except Exception:  # noqa: BLE001
+        pass
+    return _REGIME["value"]
+
+
+def sector_of(code):
+    """종목 업종 (journal/sectors.json 에 캐시, 업종은 거의 안 바뀜). 실패 시 None."""
+    from .config import SECTORS
+    cache = load_json(SECTORS, {})
+    if code in cache:
+        return cache[code]
+    try:
+        s = naver.sector(code)
+    except naver.DataError:
+        return None
+    if s:
+        cache[code] = s
+        save_json(SECTORS, cache)
+    return s
+
+
 def market_overview():
     out = {}
     for s in ("KOSPI", "KOSDAQ"):
@@ -131,11 +163,7 @@ def market_overview():
             out[s] = naver.index_quote(s)
         except naver.DataError as e:
             out[s] = {"error": str(e)}
-    try:
-        from .research import regime
-        out["regime"] = regime(naver.daily_bars("KOSPI", 120))
-    except Exception:  # noqa: BLE001
-        out["regime"] = None
+    out["regime"] = regime_now()
     ok, why = trading_window()
     out["can_trade_now"] = ok
     out["reason"] = why

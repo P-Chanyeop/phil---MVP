@@ -22,13 +22,18 @@
         <div class="hero-row">
           <div>
             <div class="label">모의 자산</div>
-            <div class="big" id="equity">$—</div>
+            <div class="big" id="equity">—</div>
             <div class="sub" id="pnl">—</div>
             <div id="todayPnl" class="today hidden"></div>
-            <div id="costLine" class="sub"></div>
           </div>
           <img src="phil.svg" class="mascot" alt="Phil">
         </div>
+
+        <div class="bd" id="breakdown">
+          <div class="bd-title">어디서 벌고 잃었나 <span class="sub">(시작 1,000만 원 대비)</span></div>
+          <div class="bd-rows" id="bdRows"></div>
+        </div>
+
         <div class="chips mt" id="chartChips"><button data-chart="today" class="chipbtn on">오늘</button><button data-chart="all" class="chipbtn">전체</button></div>
         <div class="sub" id="chartNote"></div>
         <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
@@ -36,18 +41,26 @@
           <div><b id="sKospi">—</b><span>코스피 대비</span></div>
           <div><b id="sWin">—</b><span>승률</span></div>
           <div><b id="sFc">—</b><span>예측</span></div>
-          <div><b id="sBrier">—</b><span>기저율 대비</span></div>
+          <div><b id="sBrier">—</b><span>예측 정확도</span></div>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="title">지금 상태</div>
+        <div id="stateRows" class="state-rows mt"></div>
+        <div id="pauseWarn" class="warn hidden"><span id="pauseText"></span> <button id="btnResume" class="btn ghost" style="padding:6px 10px;margin-left:6px">지금 해제</button></div>
       </div>
 
       <div class="card">
         <div class="row between">
           <div>
-            <div class="title">오늘의 사이클</div>
+            <div class="title">Phil 의 마지막 판단</div>
             <div class="sub" id="marketLine">—</div>
-            <div class="sub" id="cycleSub">정산 → 회고 → 전략 수정 → 조사 → 예측 → 매매</div>
           </div>
+          <div id="runPillHome" class="pill">대기 중</div>
         </div>
+        <div class="verdict mt" id="lastVerdict">아직 사이클을 돌리지 않았어요.</div>
+        <div class="sub" id="cycleSub"></div>
         <div class="row gap mt">
           <button id="btnRun" class="btn primary grow">▶ 사이클 실행</button>
           <button id="btnStop" class="btn ghost hidden">■ 중지</button>
@@ -61,7 +74,6 @@
           </select>
         </div>
         <div id="authWarn" class="warn hidden"></div>
-        <div id="pauseWarn" class="warn hidden"><span id="pauseText"></span> <button id="btnResume" class="btn ghost" style="padding:6px 10px;margin-left:6px">지금 해제</button></div>
         <div id="claudeWarn" class="warn hidden">`claude` CLI 를 찾지 못했어요. Claude Code 를 설치하고 로그인한 뒤 서버를 다시 켜 주세요.</div>
         <pre id="liveLog" class="log hidden"></pre>
       </div>
@@ -69,19 +81,21 @@
       <div id="nowDoing" class="nowdoing hidden"><span class="pulse-dot"></span><span id="nowText">Phil 이 생각하는 중…</span></div>
 
       <div class="card">
-        <div class="row between"><div class="title">보유 포지션</div><span class="sub" id="liveTs"></span></div>
-        <div id="openList" class="list"></div>
+        <div class="row between"><div class="title">보유 종목</div><span class="sub" id="liveTs"></span></div>
+        <div class="sub">각 종목 아래에 <b>왜 샀는지</b>와 엔진이 정한 크기를 보여줘요. 누르면 자세히.</div>
+        <div id="openList" class="list mt"></div>
       </div>
 
       <div class="card">
-        <div class="title">활동</div>
-        <div class="sub">Phil 이 한 일을 시간순으로 보여줘요.</div>
+        <div class="title">최근 청산 — 왜 샀고, 왜 나갔나</div>
+        <div id="settledList" class="list mt"></div>
+      </div>
+
+      <div class="card">
+        <div class="row between"><div class="title">활동</div>
+          <div class="chips" id="feedChips"><button data-feed="decision" class="chipbtn on">판단</button><button data-feed="forecast" class="chipbtn">예측</button><button data-feed="disclosure" class="chipbtn">공시</button><button data-feed="all" class="chipbtn">전부</button></div></div>
+        <div class="sub">판단 = 매수·청산·거부·사이클 결론. 공시 알림은 따로 모아 뒀어요.</div>
         <div id="feedList" class="list mt"></div>
-      </div>
-
-      <div class="card">
-        <div class="title">최근 청산</div>
-        <div id="settledList" class="list"></div>
       </div>
     </section>
 

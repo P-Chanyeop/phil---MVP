@@ -11,7 +11,7 @@ import math
 import os
 import uuid
 
-from . import market, naver, park, policy, safety
+from . import market, naver, park, policy, riskbook, safety
 from .config import LEDGER, append_jsonl, dump_jsonl, iso, ledger_lock, load_config, load_jsonl
 
 
@@ -77,6 +77,8 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         amount_krw=None, cycle_id=None, now=None):
     cfg = load_config()
     lim, costs = cfg["limits"], cfg["costs"]
+    risk, risk_problem = riskbook.load() if riskbook.enabled(cfg) else ({}, None)
+    lim = riskbook.tighten_limits(lim, risk)   # 에이전트의 risk.json — 더 보수적인 값만 반영
     entries = read_ledger()
     open_pos = [e for e in entries if e["status"] == "open"]
     cycle_id = cycle_id or os.environ.get("PHIL_CYCLE_ID") or "manual"
@@ -135,8 +137,26 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
                            f"정규 매수 기준 {pol['min_edge_vs_base_rate']} 미만")
         exploration = True
 
+    # 에이전트의 리스크 규칙 (업종 중복·추격 금지·진입 필터) — 엔진이 강제
+    sector, size_notes = None, []
+    if risk_problem:
+        size_notes.append(risk_problem)
+    try:
+        rb = riskbook.check(code, q, bars, open_pos, risk)
+        sector, size_notes = rb["sector"], size_notes + rb["notes"]
+    except riskbook.Veto as v:
+        raise Rejected(str(v)) from None
+
     eq = equity(entries, cfg)
-    max_amt = eq * (exp["position_pct"] if exploration else lim["max_position_pct"])
+    pct = exp["position_pct"] if exploration else lim["max_position_pct"]
+    if not exploration:   # 근거 유형의 정확도 → 크기 (미검증은 작게, 부정확은 절반)
+        cap_pct, factor, note = policy.size_factor(edge_class, cfg)
+        if cap_pct is not None:
+            pct = min(pct, cap_pct)
+        pct *= factor
+        if note:
+            size_notes.append(note)
+    max_amt = eq * pct
     amount = min(amount_krw or max_amt, max_amt, buying_power(entries, cfg))
     price = q["price"]
     qty = math.floor(amount / (price * (1 + costs["slippage"]) * (1 + costs["commission"])))
@@ -153,6 +173,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "target_price": round(price * (1 + target_pct), 2) if target_pct else None,
         "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
         "edge_class": edge_class, "rationale": rationale.strip(), "exploration": exploration,
+        "sector": sector, "size_pct": round(pct, 4), "size_notes": size_notes,
         "strategy_rev": strategy_rev(),
         "status": "open", "last_price": price,
     }
