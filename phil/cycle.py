@@ -314,6 +314,17 @@ def stop_current():
     return False
 
 
+def _last_cycle_start():
+    """마지막으로 에이전트가 돈 사이클의 시작 시각 (epoch 초). 없으면 None."""
+    from .config import parse_ts
+    for c in reversed(load_jsonl(CYCLES_LOG)[-50:]):
+        if c.get("mode") and c.get("started"):
+            t = parse_ts(c["started"])
+            if t:
+                return t.timestamp()
+    return None
+
+
 class AutoLoop:
     """웹앱 '자동 반복': 장중에는 loop_minutes 마다, 평일 장 마감 후 한 번 (정산·회고)."""
 
@@ -344,8 +355,14 @@ class AutoLoop:
         weekday = now.weekday() < 5
         in_hours = weekday and lim["trade_start"] <= hhmm <= lim["trade_end"]
         if in_hours:
+            gap = max(15, int(st.get("loop_minutes", 60))) * 60
+            if self.next_run is None:   # 서버 재시작 직후: 마지막 사이클 시각에서 이어서 (재시작마다 바로 돌지 않게)
+                last = _last_cycle_start()
+                if last and time.time() - last < gap:
+                    self.next_run = last + gap
+                    return
             if self.next_run is None or time.time() >= self.next_run:
-                self.next_run = time.time() + max(15, int(st.get("loop_minutes", 60))) * 60
+                self.next_run = time.time() + gap
                 threading.Thread(target=run_cycle, daemon=True).start()
             return
         self.next_run = None

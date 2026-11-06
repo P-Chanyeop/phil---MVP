@@ -772,3 +772,26 @@ class TestGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAutoLoopRestart(Tmp):
+    def test_restart_waits_for_interval(self):
+        from phil import cycle
+        mock.patch.object(cycle, "CYCLES_LOG", self.d / "cyc.jsonl").start()
+        config.save_operator_state({"auto_loop": True, "loop_minutes": 120})
+        now = dt.datetime(2026, 11, 6, 14, 0, tzinfo=KST)
+        mock.patch("phil.cycle.now_kst", lambda: now).start()
+        mock.patch("phil.cycle.threading.Thread").start()
+        started = []
+        mock.patch("phil.cycle.threading.Thread", lambda target, **kw: type("T", (), {"start": lambda self: started.append(1)})()).start()
+        config.append_jsonl(self.d / "cyc.jsonl", {"mode": "FULL", "started": (now - dt.timedelta(minutes=30)).astimezone(dt.timezone.utc).isoformat()})
+        loop = cycle.AutoLoop.__new__(cycle.AutoLoop)
+        loop.next_run, loop.post_close_done, loop.audit_week, loop.event_starts = None, None, None, []
+        with mock.patch("phil.cycle.time.time", lambda: now.timestamp()):
+            loop._tick()
+        self.assertEqual(started, [])                               # 30분 전에 돌았으니 바로 안 돎
+        self.assertAlmostEqual(loop.next_run, now.timestamp() + 90 * 60, delta=5)
+        with mock.patch("phil.cycle.time.time", lambda: now.timestamp() + 91 * 60):
+            loop._tick()
+        self.assertEqual(started, [1])
+
