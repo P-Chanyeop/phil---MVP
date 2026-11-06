@@ -21,8 +21,8 @@ $("#sheet").onclick = (e) => { if (e.target.id === "sheet") $("#sheet").classLis
 
 // 탭
 let currentTab = "home";
-document.querySelectorAll(".bottom button").forEach((b) => b.onclick = () => {
-  document.querySelectorAll(".bottom button").forEach((x) => x.classList.toggle("active", x === b));
+document.querySelectorAll(".nav button, .bottom button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".nav button, .bottom button").forEach((x) => x.classList.toggle("active", x.dataset.tab === b.dataset.tab));
   currentTab = b.dataset.tab;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + currentTab));
   if (currentTab === "journal") { loadJournal(); $("#journalDot").classList.add("hidden"); }
@@ -36,11 +36,11 @@ let S = null, lastRetroCount = null, POS = [];
 function spark(curve, start) {
   const svg = $("#spark");
   const pts = [start, ...curve.map((c) => c.equity)];
-  if (pts.length < 2) { svg.innerHTML = `<line x1="0" y1="30" x2="300" y2="30" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 4"/>`; return; }
+  if (pts.length < 2) { svg.innerHTML = `<line x1="0" y1="30" x2="300" y2="30" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>`; return; }
   const lo = Math.min(...pts), hi = Math.max(...pts), rng = hi - lo || 1;
   const xy = pts.map((v, i) => [i / (pts.length - 1) * 300, 54 - (v - lo) / rng * 48]);
   const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--accent-soft)"/><path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--phil-fill)"/><path d="${d}" fill="none" stroke="var(--phil)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
 }
 const CLASS_KO = {earnings: "실적", disclosure: "공시", "news-flow": "뉴스", momentum: "모멘텀", "mean-reversion": "되돌림",
   event: "이벤트", macro: "거시", other: "기타", rule: "엔진 규칙"};
@@ -58,42 +58,43 @@ function closedItem(e) {
     <div class="meta"><span>나간 이유: ${esc(e.exit_reason)}</span><span>${ko(e.edge_class)}${e.exploration ? " · 탐색" : ""}</span><span>${ago(e.exit_ts)}</span></div>
     ${whyLine(e.rationale)}</div>`;
 }
-function bdRow(label, v, base, sub) {
-  const w = base ? Math.min(100, Math.abs(v) / base * 100) : 0;
+function bdRow(label, v, sub) {
   return `<div class="bd-row"><div class="bd-l">${label}${sub ? `<span class="sub">${sub}</span>` : ""}</div>
-    <div class="bd-bar"><span class="${v >= 0 ? "pos-bar" : "neg-bar"}" style="width:${w.toFixed(0)}%"></span></div>
     <div class="bd-v ${ud(v)}">${won(v, 1)}</div></div>`;
 }
 function renderBreakdown(b, start) {
   if (!b) return;
-  const base = Math.max(1, ...[b.stock_total_krw, b.park_krw, b.claude_cost_krw, b.net_krw].map(Math.abs));
+  const parts = [["종목 매매", b.stock_total_krw], ["대기 자금", b.park_krw], ["Claude 비용", -b.claude_cost_krw]];
+  const tot = parts.reduce((a, [, v]) => a + Math.abs(v), 0) || 1;
+  $("#waterfall").innerHTML = `<div class="wf-bar">${parts.map(([l, v]) => `<div class="wf-seg ${l === "Claude 비용" ? "cost" : v >= 0 ? "up" : "down"}" style="width:${(Math.abs(v) / tot * 100).toFixed(1)}%" title="${l} ${won(v, 1)}"></div>`).join("")}</div>
+    <div class="wf-legend">${parts.map(([l, v]) => `<span><i style="background:${l === "Claude 비용" ? "var(--muted)" : v >= 0 ? "var(--up)" : "var(--down)"}"></i>${l} <b class="${ud(v)}">${won(v, 1)}</b></span>`).join("")}</div>`;
   $("#bdRows").innerHTML =
-    bdRow("종목 매매", b.stock_total_krw, base, `청산 ${b.closed_n}건 ${won(b.stock_realized_krw, 1)} · 보유 ${b.open_n}종목 ${won(b.stock_unrealized_krw, 1)}`) +
-    bdRow("대기 자금 (KODEX 200)", b.park_krw, base, b.park_value_krw ? `지금 ${won(b.park_value_krw)} 들어 있음` : "비어 있음") +
-    bdRow("Claude 비용", -b.claude_cost_krw, base, "") +
-    `<div class="bd-row total"><div class="bd-l">합계</div><div class="bd-bar"></div><div class="bd-v ${ud(b.net_krw)}">${won(b.net_krw, 1)} <span class="sub">(${sp(b.net_krw / start * 100)})</span></div></div>`;
+    bdRow("종목 매매", b.stock_total_krw, `청산 ${b.closed_n}건 ${won(b.stock_realized_krw, 1)}, 보유 ${b.open_n}종목 평가 ${won(b.stock_unrealized_krw, 1)}`) +
+    bdRow("대기 자금 (KODEX 200)", b.park_krw, b.park_value_krw ? `지금 ${won(b.park_value_krw)} 들어 있음` : "비어 있음") +
+    bdRow("Claude 비용", -b.claude_cost_krw, "사이클을 돌린 비용") +
+    `<div class="bd-row total"><div class="bd-l">합계</div><div class="bd-v ${ud(b.net_krw)}">${won(b.net_krw, 1)} <span class="sub">(${sp(b.net_krw / start * 100)})</span></div></div>`;
 }
 function stateRow(icon, text, tone) { return `<div class="state-row ${tone || ""}"><span class="si">${icon}</span><span>${text}</span></div>`; }
 function renderState(S) {
   const mk = S.market || {}, rg = mk.regime, g = S.park_gate || {}, tb = S.tuning_brief || {}, rk = S.risk || {};
   const rows = [];
   if (rg) rows.push(stateRow(rg.label === "상승장" ? "📈" : rg.label === "하락장" ? "📉" : "➖",
-    `<b>${esc(rg.label)}</b> · 코스피가 60일 평균보다 ${sp(rg.kospi_vs_ma60)}${rg.label === "하락장" ? " — 추세 추종 매수는 낮게 봐요" : ""}`, rg.label === "하락장" ? "warnrow" : ""));
+    `<b>${esc(rg.label)}</b> · 코스피가 60일 평균보다 ${sp(rg.kospi_vs_ma60)}${rg.label === "하락장" ? " — 추세 추종 매수는 낮게 봅니다" : ""}`, rg.label === "하락장" ? "warnrow" : ""));
   const pk = S.status?.park || {};
-  if (S.operator?.park_enabled === false) rows.push(stateRow("💤", "대기 자금 꺼짐 — 남는 현금은 현금으로 둬요"));
-  else if (g.reason) rows.push(stateRow("💤", `대기 자금 <b>새로 안 넣음</b> — ${esc(g.reason)}${/하락장/.test(g.reason) ? " · 자산의 30% 까지로 줄여요" : ""}`, "warnrow"));
-  else rows.push(stateRow("💤", `대기 자금 투입 가능 — 남는 현금은 한 번에 자산의 25% 씩 코스피200 에 넣어요${pk.qty ? ` (지금 ${won(pk.value_krw)})` : ""}`));
+  if (S.operator?.park_enabled === false) rows.push(stateRow("💤", "대기 자금 꺼짐 — 남는 현금은 그대로 둡니다"));
+  else if (g.reason) rows.push(stateRow("💤", `대기 자금 <b>새로 안 넣음</b> — ${esc(g.reason)}${/하락장/.test(g.reason) ? " · 자산의 30% 까지로 줄입니다" : ""}`, "warnrow"));
+  else rows.push(stateRow("💤", `대기 자금 투입 가능 — 남는 현금은 한 번에 자산의 25% 씩 코스피200 에 넣습니다${pk.qty ? ` (지금 ${won(pk.value_krw)})` : ""}`));
   if (S.buy_pause) rows.push(stateRow("⛔", `안전장치 — ${esc(S.buy_pause)}`, "badrow"));
   else rows.push(stateRow("🛡️", "안전장치 대기 중 — 종목 기준 자산이 고점 대비 5% 빠지면 2거래일 신규 매수 중단"));
-  if (tb.defense_level) rows.push(stateRow("🧯", `방어 모드 ${tb.defense_level}단계 — 매수 크기를 줄이고 기준을 높였어요`, "warnrow"));
-  else if (tb.window_10d) rows.push(stateRow("🧯", `최근 ${tb.window_10d.days}거래일 종목 기준 비용 후 <span class="${ud(tb.window_10d.after_cost_pct)}">${sp(tb.window_10d.after_cost_pct)}</span> — 방어 모드 꺼짐 (−1% 아래면 켜져요)`));
-  else rows.push(stateRow("🧯", "방어 모드 — 장 마감 기록 3일이 쌓이면 판단 시작"));
-  if (tb.cost_saver) rows.push(stateRow("💸", "비용 절감 중 — Claude 비용이 수익보다 커서 자동 반복을 4시간으로 늘렸어요", "warnrow"));
+  if (tb.defense_level) rows.push(stateRow("🧯", `방어 모드 ${tb.defense_level}단계 — 매수 크기를 줄이고 기준을 높였습니다`, "warnrow"));
+  else if (tb.window_10d) rows.push(stateRow("🧯", `최근 ${tb.window_10d.days}거래일 종목 기준 비용 후 <span class="${ud(tb.window_10d.after_cost_pct)}">${sp(tb.window_10d.after_cost_pct)}</span> — 방어 모드 꺼짐 (−1% 아래면 켜집니다)`));
+  else rows.push(stateRow("🧯", "방어 모드 — 장 마감 기록 3일이 쌓이면 판단을 시작합니다"));
+  if (tb.cost_saver) rows.push(stateRow("💸", "비용 절감 중 — Claude 비용이 수익보다 커서 자동 반복을 4시간으로 늘렸습니다", "warnrow"));
   if (rk.enforced) {
     const f = (rk.entry_filters || []).length, l = rk.limits || {};
     rows.push(stateRow("📏", `Phil 의 규칙 강제 중 — 같은 업종 ${l.max_same_sector ?? "제한 없음"}종목까지 · 당일 +${l.avoid_if_up_today_pct ?? "∞"}% 이상 추격 금지 · 진입 필터 ${f}개${rk.problem ? ` · <span class="neg">${esc(rk.problem)}</span>` : ""}`));
   }
-  rows.push(stateRow(mk.can_trade_now ? "🟢" : "⚪", mk.can_trade_now ? "장중 — 09:30~15:15 매매 가능, 개장 직후 30분은 쉬어요" : esc(mk.reason || "장 밖")));
+  rows.push(stateRow(mk.can_trade_now ? "●" : "○", mk.can_trade_now ? "장중. 매매는 09:30~15:15, 개장 직후 30분은 쉽니다" : esc(mk.reason || "장 밖")));
   $("#stateRows").innerHTML = rows.join("");
 }
 async function loadHome() {
@@ -101,13 +102,17 @@ async function loadHome() {
   const sc = S.score, t = sc.trades, cal = sc.calibration;
   const liveOn = LIVE && (LIVE.positions.length || (LIVE.park || {}).qty);
   if (!liveOn) $("#equity").textContent = won(sc.equity_krw);
-  if (!liveOn) $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> · 시작 ${won(sc.bankroll_start_krw)}` + (sc.kospi_return_pct != null ? ` · 같은 기간 코스피 <span class="${ud(sc.kospi_return_pct)}">${sp(sc.kospi_return_pct)}</span>` : "");
+  if (!liveOn) $("#pnl").innerHTML = `<span class="${ud(sc.return_pct)}">${sp(sc.return_pct)}</span> 시작 ${won(sc.bankroll_start_krw)}`;
   $("#sKospi").textContent = sc.alpha_pct == null ? "—" : sp(sc.alpha_pct);
   $("#sKospi").className = ud(sc.alpha_pct);
+  $("#sKospiSub").textContent = sc.kospi_return_pct != null ? `코스피 ${sp(sc.kospi_return_pct)} 대비` : "같은 기간 초과수익";
+  $("#sNet").textContent = sp(sc.return_after_cost_pct); $("#sNet").className = ud(sc.return_after_cost_pct);
+  $("#sNetSub").textContent = sc.claude_cost ? `Claude 누적 $${sc.claude_cost.total_usd.toFixed(2)}` : "";
   $("#sWin").textContent = t.n ? pct(t.win_rate) : "—";
-  $("#sFc").textContent = sc.forecasts.total;
-  $("#sBrier").textContent = cal.n ? (cal.brier_delta < 0 ? "기저율보다 ↑" : "기저율보다 ↓") : "—";
-  $("#sBrier").className = cal.n ? (cal.brier_delta < 0 ? "pos" : "neg") : "";
+  $("#sWinSub").textContent = t.n ? `청산 ${t.n}건, 평균 ${sp(t.avg_ret_pct)}` : "청산 없음";
+  $("#sFc").textContent = `예측 ${sc.forecasts.total}건, 정산 ${cal.n || 0}건`;
+  $("#sBrier").textContent = cal.n ? (cal.brier_delta < 0 ? "기저율보다 정확" : "기저율보다 부정확") : "—";
+  $("#sBrier").className = cal.n ? (cal.brier_delta < 0 ? "up" : "down") : "";
   if (!liveOn) renderBreakdown(S.breakdown, sc.bankroll_start_krw);
   renderState(S);
   if (chartMode === "all" || !LIVE || (LIVE.intraday || []).length < 2) {
@@ -117,15 +122,12 @@ async function loadHome() {
   const mk = S.market || {};
   const idx = (k) => mk[k] && mk[k].price ? `${mk[k].name} ${mk[k].price.toLocaleString()} <span class="${ud(mk[k].change_pct)}">${sp(mk[k].change_pct)}</span>` : "";
   const rg = mk.regime;
-  $("#marketLine").innerHTML = `${mk.can_trade_now ? "🟢 장중" : "⚪ " + esc(mk.reason || "")} · ${idx("KOSPI")} · ${idx("KOSDAQ")}` +
-    (rg ? ` · <b>${rg.label === "상승장" ? "📈" : rg.label === "하락장" ? "📉" : "➖"} ${esc(rg.label)}</b> <span class="sub">(코스피 60일선 대비 ${sp(rg.kospi_vs_ma60)})</span>` : "");
+  $("#marketLine").innerHTML = `${idx("KOSPI")} &nbsp; ${idx("KOSDAQ")}`;
   const run = S.current.running;
-  for (const id of ["#runPill", "#runPillHome"]) {
-    $(id).textContent = run ? "🐹 " + (S.current.phase || "실행 중") : mk.can_trade_now ? "장중 · 모의투자" : "장 마감 · 모의투자";
-    $(id).classList.toggle("run", run);
-  }
+  $("#runPill").textContent = run ? "Phil " + (S.current.phase || "실행 중") : mk.can_trade_now ? "장중" : "장 마감";
+  $("#runPill").classList.toggle("run", run);
   $("#btnRun").disabled = run || !S.claude_available;
-  $("#btnRun").textContent = run ? "실행 중…" : mk.can_trade_now ? "▶ 사이클 실행" : "▶ 정산·회고 실행";
+  $("#btnRun").textContent = run ? "실행 중" : mk.can_trade_now ? "사이클 실행" : "정산·회고 실행";
   $("#btnStop").classList.toggle("hidden", !run);
   $("#claudeWarn").classList.toggle("hidden", S.claude_available);
   $("#pauseWarn").classList.toggle("hidden", !S.buy_pause);
@@ -147,13 +149,13 @@ async function loadHome() {
   if (S.watch && S.watch.watching) sub += ` · 실시간 감시 ${S.watch.watching}종목`;
   if (S.operator.auto_loop) sub += S.next_auto_run ? ` · 다음 자동 실행 ${Math.max(0, Math.round((S.next_auto_run * 1000 - Date.now()) / 60000))}분 후` : ` · 자동 반복: 장중 + 장 마감 후(${S.post_close_time || "16:30"} 연구) + 토요일 감사`;
   $("#cycleSub").textContent = sub;
-  if (!LIVE) $("#openList").innerHTML = (S.status.open || []).map(openItem).join("") || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
+  if (!LIVE) $("#openList").innerHTML = (S.status.open || []).map(openItem).join("") || `<div class="empty">보유 종목이 없습니다. 현금도 포지션입니다.</div>`;
   if (run || logFollow) loadLog();
 }
 async function loadPositions() {
   POS = await api("/api/positions");
   const closed = POS.filter((e) => e.status === "closed").sort((a, b) => (b.exit_ts || "").localeCompare(a.exit_ts || "")).slice(0, 15);
-  $("#settledList").innerHTML = closed.map(closedItem).join("") || `<div class="empty">아직 청산된 매매가 없어요.</div>`;
+  $("#settledList").innerHTML = closed.map(closedItem).join("") || `<div class="empty">아직 청산된 매매가 없습니다.</div>`;
 }
 document.addEventListener("click", (ev) => {
   const it = ev.target.closest("[data-pos]"); if (!it) return;
@@ -341,11 +343,11 @@ function intradayChart(rows, start) {
   const all = eq.concat(kos.filter((v) => v != null)), lo = Math.min(...all), hi = Math.max(...all), rng = hi - lo || 1;
   const path = (vals) => vals.map((v, i) => v == null ? "" : `${i ? "L" : "M"}${(i / (vals.length - 1) * 300).toFixed(1)} ${(54 - (v - lo) / rng * 48).toFixed(1)}`).join(" ");
   const d = path(eq);
-  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--accent-soft)"/>` +
-    (k0 ? `<path d="${path(kos)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>` : "") +
-    `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  svg.innerHTML = `<path d="${d} L300 60 L0 60 Z" fill="var(--phil-fill)"/>` +
+    (k0 ? `<path d="${path(kos)}" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>` : "") +
+    `<path d="${d}" fill="none" stroke="var(--phil)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
   const chg = (eq[eq.length - 1] / eq[0] - 1) * 100;
-  $("#chartNote").innerHTML = `오늘 ${rows[0].t}~${rows[rows.length - 1].t} · Phil <span class="${ud(chg)}">${sp(chg)}</span>` + (k0 ? ` · <span style="opacity:.7">점선 코스피</span>` : "");
+  $("#chartNote").innerHTML = `오늘 ${rows[0].t}~${rows[rows.length - 1].t}, Phil <span class="${ud(chg)}">${sp(chg)}</span>` + (k0 ? `, 점선은 코스피` : "");
 }
 function liveItem(o) {
   const prev = lastPrices[o.id], dir = prev == null || prev === o.price ? "" : o.price > prev ? "flash-up" : "flash-down";
@@ -368,18 +370,18 @@ async function loadLive() {
       <div class="sub">${pk.qty.toLocaleString()}주 · 남는 현금을 코스피200 에 넣어 둠 · 종목 살 때 필요한 만큼 팔아서 씀</div></div>
       <div style="text-align:right"><div class="pos-price">${won(pk.value_krw)}</div><div class="pos-pnl ${ud(pk.pnl_krw)}">${won(pk.pnl_krw, 1)}${pk.day_change_pct != null ? ` · 오늘 ${sp(pk.day_change_pct)}` : ""}</div></div></div>
       ${gate ? `<div class="why dim">지금은 새로 안 넣음 · ${esc(gate)}</div>` : ""}</div>` : "";
-  $("#openList").innerHTML = (LIVE.positions.map(liveItem).join("") + parkHtml) || `<div class="empty">보유 종목이 없어요. 현금도 포지션이에요.</div>`;
+  $("#openList").innerHTML = (LIVE.positions.map(liveItem).join("") + parkHtml) || `<div class="empty">보유 종목이 없습니다. 현금도 포지션입니다.</div>`;
   $("#liveTs").textContent = (LIVE.positions.length || pk.qty ? "실시간 · " + new Date(LIVE.ts * 1000).toLocaleTimeString("ko-KR") : "") + ` · 현금 ${won(LIVE.cash_krw)}`;
   if (LIVE.positions.length || pk.qty) {
     $("#equity").textContent = won(LIVE.equity_krw);
     const r = (LIVE.equity_krw / LIVE.start_krw - 1) * 100;
-    $("#pnl").innerHTML = `<span class="${ud(r)}">${sp(r)}</span> · 시작 ${won(LIVE.start_krw)} · 실시간`;
+    $("#pnl").innerHTML = `<span class="${ud(r)}">${sp(r)}</span> 실시간`;
     renderBreakdown(LIVE.breakdown, LIVE.start_krw);
   }
   if (LIVE.intraday.length) {   // 오늘 손익 = 지금 자산 − 오늘 장 시작 때 자산
     const base = LIVE.intraday[0].equity, now = LIVE.equity_krw, d = now - base, r = d / base * 100;
-    $("#todayPnl").classList.remove("hidden");
-    $("#todayPnl").innerHTML = `오늘 <b class="${ud(d)}">${won(d, 1)}</b> <span class="${ud(r)}">(${sp(r)})</span>`;
+    $("#todayPnl").textContent = won(d, 1); $("#todayPnl").className = ud(d);
+    $("#todayPct").textContent = sp(r) + " (장 시작 대비)";
   }
   if (chartMode === "today" && LIVE.intraday.length >= 2) intradayChart(LIVE.intraday, LIVE.start_krw);
 }
@@ -392,7 +394,7 @@ function renderFeed() {
   const items = FEED.items.filter((x) => feedKind === "all" || (x.kind || "system") === feedKind);
   $("#feedList").innerHTML = items.slice(0, 30).map((x) => `<div class="feed-item ${feedTop && x.ts > feedTop ? "feed-new" : ""}" ${x.pos ? `data-pos="${esc(x.pos)}"` : x.cycle ? `data-log="${esc(x.cycle)}"` : ""}><div class="feed-icon">${x.icon}</div>
     <div><div class="feed-text">${esc(x.text)}</div>${x.sub ? `<div class="feed-sub">${esc(x.sub)}</div>` : ""}<div class="feed-sub">${ago(x.ts)}</div></div></div>`).join("")
-    || `<div class="empty">${feedKind === "decision" ? "아직 판단 기록이 없어요. 장중에 사이클이 돌면 여기에 쌓여요." : "해당 기록이 없어요."}</div>`;
+    || `<div class="empty">${feedKind === "decision" ? "아직 판단 기록이 없습니다. 장중에 사이클이 돌면 여기에 쌓입니다." : "해당 기록이 없습니다."}</div>`;
 }
 async function loadFeed() {
   let f; try { f = await api("/api/feed?limit=120"); } catch { return; }

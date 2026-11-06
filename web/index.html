@@ -3,231 +3,233 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F4EEE6">
+<meta name="theme-color" content="#0D1117">
 <title>Phil 트레이더</title>
 <link rel="icon" href="phil.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
-  <header class="top">
-    <div class="brand"><img src="phil.svg" alt="" class="logo"><span>Phil</span></div>
+  <aside class="side">
+    <div class="brand"><img src="phil.svg" alt="" class="logo"><span>Phil</span><small>모의투자</small></div>
+    <nav class="nav">
+      <button data-tab="home" class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>홈</span></button>
+      <button data-tab="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span>탐색</span></button>
+      <button data-tab="journal"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7M9 8h4"/></svg><span>저널</span><i id="journalDot" class="dot hidden"></i></button>
+      <button data-tab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>설정</span></button>
+    </nav>
     <div id="runPill" class="pill">대기 중</div>
-  </header>
+  </aside>
 
   <main>
     <!-- 홈 -->
     <section id="tab-home" class="tab active">
-      <div class="card hero">
-        <div class="hero-row">
-          <div>
-            <div class="label">모의 자산</div>
-            <div class="big" id="equity">—</div>
-            <div class="sub" id="pnl">—</div>
-            <div id="todayPnl" class="today hidden"></div>
-          </div>
-          <img src="phil.svg" class="mascot" alt="Phil">
-        </div>
-
-        <div class="bd" id="breakdown">
-          <div class="bd-title">어디서 벌고 잃었나 <span class="sub">(시작 1,000만 원 대비)</span></div>
-          <div class="bd-rows" id="bdRows"></div>
-        </div>
-
-        <div class="chips mt" id="chartChips"><button data-chart="today" class="chipbtn on">오늘</button><button data-chart="all" class="chipbtn">전체</button></div>
-        <div class="sub" id="chartNote"></div>
-        <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
-        <div class="stats">
-          <div><b id="sKospi">—</b><span>코스피 대비</span></div>
-          <div><b id="sWin">—</b><span>승률</span></div>
-          <div><b id="sFc">—</b><span>예측</span></div>
-          <div><b id="sBrier">—</b><span>예측 정확도</span></div>
-        </div>
+      <div class="ticker">
+        <div class="tk"><span class="tk-l">모의 자산</span><b id="equity">—</b><span id="pnl" class="tk-s">—</span></div>
+        <div class="tk"><span class="tk-l">오늘</span><b id="todayPnl">—</b><span id="todayPct" class="tk-s"></span></div>
+        <div class="tk"><span class="tk-l">코스피 대비</span><b id="sKospi">—</b><span class="tk-s" id="sKospiSub">같은 기간 초과수익</span></div>
+        <div class="tk"><span class="tk-l">비용 뺀 수익률</span><b id="sNet">—</b><span class="tk-s" id="sNetSub"></span></div>
+        <div class="tk"><span class="tk-l">승률</span><b id="sWin">—</b><span class="tk-s" id="sWinSub"></span></div>
+        <div class="tk"><span class="tk-l">예측 정확도</span><b id="sBrier">—</b><span class="tk-s" id="sFc"></span></div>
       </div>
 
-      <div class="card">
-        <div class="title">지금 상태</div>
-        <div id="stateRows" class="state-rows mt"></div>
-        <div id="pauseWarn" class="warn hidden"><span id="pauseText"></span> <button id="btnResume" class="btn ghost" style="padding:6px 10px;margin-left:6px">지금 해제</button></div>
-      </div>
+      <div class="grid home-grid">
+        <div class="col main-col">
+          <section class="panel" style="--o:1">
+            <header class="ph"><h2>어디서 벌고 잃었나</h2><span class="ph-s">시작 1,000만 원에서 지금까지</span></header>
+            <div class="wf" id="waterfall"></div>
+            <div class="bd-rows" id="bdRows"></div>
+          </section>
 
-      <div class="card">
-        <div class="row between">
-          <div>
-            <div class="title">Phil 의 마지막 판단</div>
-            <div class="sub" id="marketLine">—</div>
-          </div>
-          <div id="runPillHome" class="pill">대기 중</div>
+          <section class="panel" style="--o:4">
+            <header class="ph"><h2>자산 흐름</h2>
+              <div class="seg" id="chartChips"><button data-chart="today" class="on">오늘</button><button data-chart="all">전체</button></div></header>
+            <div class="ph-s" id="chartNote"></div>
+            <svg id="spark" class="spark" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+          </section>
+
+          <section class="panel" style="--o:5">
+            <header class="ph"><h2>보유 종목</h2><span class="ph-s" id="liveTs"></span></header>
+            <div id="openList" class="list"></div>
+          </section>
+
+          <section class="panel" style="--o:6">
+            <header class="ph"><h2>최근 청산</h2><span class="ph-s">왜 샀고, 왜 나갔나</span></header>
+            <div id="settledList" class="list"></div>
+          </section>
         </div>
-        <div class="verdict mt" id="lastVerdict">아직 사이클을 돌리지 않았어요.</div>
-        <div class="sub" id="cycleSub"></div>
-        <div class="row gap mt">
-          <button id="btnRun" class="btn primary grow">▶ 사이클 실행</button>
-          <button id="btnStop" class="btn ghost hidden">■ 중지</button>
-          <button id="btnSettle" class="btn ghost">정산</button>
+
+        <div class="col side-col">
+          <section class="panel" style="--o:2">
+            <header class="ph"><h2>Phil 의 마지막 판단</h2><span class="ph-s" id="marketLine">—</span></header>
+            <div class="verdict" id="lastVerdict">아직 사이클을 돌리지 않았습니다.</div>
+            <div class="ph-s" id="cycleSub"></div>
+            <div class="row gap mt">
+              <button id="btnRun" class="btn primary grow">사이클 실행</button>
+              <button id="btnStop" class="btn ghost hidden">중지</button>
+              <button id="btnSettle" class="btn ghost">정산</button>
+            </div>
+            <div class="row between mt">
+              <label class="switch-row"><input type="checkbox" id="autoLoop"><span class="switch"></span>자동 반복</label>
+              <select id="loopMin" class="select">
+                <option value="30">30분마다</option><option value="60">1시간마다</option>
+                <option value="120">2시간마다</option><option value="240">4시간마다</option>
+              </select>
+            </div>
+            <div id="authWarn" class="warn hidden"></div>
+            <div id="claudeWarn" class="warn hidden">claude CLI 를 찾지 못했습니다. Claude Code 를 설치하고 로그인한 뒤 서버를 다시 켜 주세요.</div>
+            <div id="nowDoing" class="nowdoing hidden"><span class="pulse-dot"></span><span id="nowText">Phil 이 생각하는 중</span></div>
+            <pre id="liveLog" class="log hidden"></pre>
+          </section>
+
+          <section class="panel" style="--o:3">
+            <header class="ph"><h2>지금 상태</h2></header>
+            <div id="stateRows" class="state-rows"></div>
+            <div id="pauseWarn" class="warn hidden"><span id="pauseText"></span> <button id="btnResume" class="btn ghost sm">지금 해제</button></div>
+          </section>
+
+          <section class="panel" style="--o:7">
+            <header class="ph"><h2>활동</h2>
+              <div class="seg" id="feedChips"><button data-feed="decision" class="on">판단</button><button data-feed="forecast">예측</button><button data-feed="disclosure">공시</button><button data-feed="all">전부</button></div></header>
+            <div id="feedList" class="list feed"></div>
+          </section>
         </div>
-        <div class="row between mt">
-          <label class="switch-row"><input type="checkbox" id="autoLoop"><span class="switch"></span>자동 반복</label>
-          <select id="loopMin" class="select">
-            <option value="30">30분마다</option><option value="60">1시간마다</option>
-            <option value="120">2시간마다</option><option value="240">4시간마다</option>
-          </select>
-        </div>
-        <div id="authWarn" class="warn hidden"></div>
-        <div id="claudeWarn" class="warn hidden">`claude` CLI 를 찾지 못했어요. Claude Code 를 설치하고 로그인한 뒤 서버를 다시 켜 주세요.</div>
-        <pre id="liveLog" class="log hidden"></pre>
-      </div>
-
-      <div id="nowDoing" class="nowdoing hidden"><span class="pulse-dot"></span><span id="nowText">Phil 이 생각하는 중…</span></div>
-
-      <div class="card">
-        <div class="row between"><div class="title">보유 종목</div><span class="sub" id="liveTs"></span></div>
-        <div class="sub">각 종목 아래에 <b>왜 샀는지</b>와 엔진이 정한 크기를 보여줘요. 누르면 자세히.</div>
-        <div id="openList" class="list mt"></div>
-      </div>
-
-      <div class="card">
-        <div class="title">최근 청산 — 왜 샀고, 왜 나갔나</div>
-        <div id="settledList" class="list mt"></div>
-      </div>
-
-      <div class="card">
-        <div class="row between"><div class="title">활동</div>
-          <div class="chips" id="feedChips"><button data-feed="decision" class="chipbtn on">판단</button><button data-feed="forecast" class="chipbtn">예측</button><button data-feed="disclosure" class="chipbtn">공시</button><button data-feed="all" class="chipbtn">전부</button></div></div>
-        <div class="sub">판단 = 매수·청산·거부·사이클 결론. 공시 알림은 따로 모아 뒀어요.</div>
-        <div id="feedList" class="list mt"></div>
       </div>
     </section>
 
     <!-- 탐색 -->
     <section id="tab-search" class="tab">
-      <div class="card">
-        <div class="title">종목 탐색</div>
-        <div class="sub">코스피 시총 상위 200 + 코스닥 상위 100 (우선주·스팩 제외)</div>
-        <form id="scanForm" class="row gap mt">
-          <input id="scanQ" class="input grow" placeholder="종목명 또는 코드">
-          <button class="btn primary">검색</button>
-        </form>
-        <div class="chips mt" id="sortChips">
-          <button data-sort="value" class="chipbtn on">거래대금</button>
-          <button data-sort="up" class="chipbtn">상승률</button>
-          <button data-sort="down" class="chipbtn">하락률</button>
-          <button data-sort="rank" class="chipbtn">시가총액</button>
+      <div class="grid">
+        <div class="col">
+          <section class="panel">
+            <header class="ph"><h2>종목 탐색</h2><span class="ph-s">코스피 시총 상위 200 + 코스닥 상위 100</span></header>
+            <form id="scanForm" class="row gap">
+              <input id="scanQ" class="input grow" placeholder="종목명 또는 코드">
+              <button class="btn primary">검색</button>
+            </form>
+            <div class="seg mt" id="sortChips">
+              <button data-sort="value" class="on">거래대금</button>
+              <button data-sort="up">상승률</button>
+              <button data-sort="down">하락률</button>
+              <button data-sort="rank">시가총액</button>
+            </div>
+            <div id="scanList" class="list mt"></div>
+          </section>
         </div>
       </div>
-      <div id="scanList" class="list cards"></div>
     </section>
 
     <!-- 저널 -->
     <section id="tab-journal" class="tab">
-      <div class="card">
-        <div class="tag">🏷 이름의 유래</div>
-        <div class="title lg">같은 날을 반복하며, 이길 때까지</div>
-        <div class="sub">매 사이클 결과를 정산하고, 틀린 걸 회고하고, 스스로 규칙을 고칩니다.</div>
-        <ol id="timeline" class="timeline mt"></ol>
-      </div>
-      <div class="card">
-        <div class="title">전략 수정 기록</div>
-        <div class="sub">플레이북의 모든 변경은 Phil 이 (모의로) 돈을 내고 배운 교훈이에요.</div>
-        <div id="stratHist" class="list mt"></div>
-        <details class="mt"><summary>현재 플레이북 보기</summary><pre id="playbook" class="doc"></pre></details>
-      </div>
-      <div class="card">
-        <div class="title">근거 유형별 예측 정확도</div>
-        <div class="sub" id="fcSub">"N일 뒤 오를까?"에 대한 Phil 의 확률이 그 종목의 과거 기저율보다 정확한지 봐요.</div>
-        <div id="catTable" class="list mt"></div>
-      </div>
-      <div class="card">
-        <div class="title">규칙 (엔진 자동매매)</div>
-        <div class="sub">Phil 이 만든 규칙을 과거 3년으로 검증하고, 실제 시장에서 돈 없이 신호를 지켜본 뒤(그림자), 통과하면 엔진이 매일 15:05 에 직접 사요.</div>
-        <div id="discLine" class="sub mt"></div>
-        <div id="ruleList" class="list mt"></div>
-      </div>
-      <div class="card">
-        <div class="title">근거 유형별 매매 성적</div>
-        <div id="classTable" class="list"></div>
+      <div class="grid home-grid">
+        <div class="col main-col">
+          <section class="panel">
+            <header class="ph"><h2>같은 날을 반복하며, 이길 때까지</h2><span class="ph-s">매 사이클 결과를 정산하고, 틀린 걸 회고하고, 스스로 규칙을 고칩니다.</span></header>
+            <ol id="timeline" class="timeline"></ol>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>전략 수정 기록</h2><span class="ph-s">플레이북 변경은 Phil 이 (모의로) 돈을 내고 배운 것</span></header>
+            <div id="stratHist" class="list"></div>
+            <details class="mt"><summary>현재 플레이북 보기</summary><pre id="playbook" class="doc"></pre></details>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>규칙 (엔진 자동매매)</h2><span class="ph-s">백테스트 → 그림자 → 실전. 통과한 규칙은 엔진이 매일 15:05 에 직접 삽니다.</span></header>
+            <div id="discLine" class="ph-s"></div>
+            <div id="ruleList" class="list"></div>
+          </section>
+        </div>
+        <div class="col side-col">
+          <section class="panel">
+            <header class="ph"><h2>근거 유형별 예측 정확도</h2></header>
+            <div class="ph-s" id="fcSub"></div>
+            <div id="catTable" class="list"></div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>근거 유형별 매매 성적</h2></header>
+            <div id="classTable" class="list"></div>
+          </section>
+        </div>
       </div>
     </section>
 
     <!-- 설정 -->
     <section id="tab-settings" class="tab">
-      <div class="card">
-        <div class="row between">
-          <div class="title">한투 모의투자 계좌</div>
-          <span id="kisBadge" class="badge">OFF</span>
+      <div class="grid home-grid">
+        <div class="col main-col">
+          <section class="panel">
+            <header class="ph"><h2>한투 모의투자 계좌</h2><span id="kisBadge" class="badge">OFF</span></header>
+            <p class="ph-s">Phil 의 모의 매매를 한국투자증권 모의투자 계좌에도 똑같이 주문합니다 (실제 돈 아님).</p>
+            <div id="kisInfo" class="kv">확인 중</div>
+            <button id="btnKis" class="btn primary mt wide">연동 켜기</button>
+            <h3 class="h3">한투 주문 기록</h3>
+            <div id="kisList" class="list"></div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>자동 조정</h2></header>
+            <p class="ph-s">성적에 따라 엔진이 스스로 설정을 바꾸고, 나빠지면 되돌립니다. 안전장치는 대상이 아닙니다.</p>
+            <div id="tuneInfo" class="kv">확인 중</div>
+            <div class="row gap mt">
+              <button id="btnTuneRevert" class="btn ghost grow hidden">시험 중인 설정 되돌리기</button>
+              <button id="btnDefenseReset" class="btn ghost grow hidden">방어 모드 해제</button>
+            </div>
+            <div id="tuneHist" class="list mt"></div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>사이클 기록</h2></header>
+            <div id="cycleList" class="list"></div>
+          </section>
         </div>
-        <div class="sub">Phil 의 모의 매매를 한국투자증권 <b>모의투자 계좌</b>에도 똑같이 주문해요 (실제 돈 아님). 장중 1분마다 손절·목표가를 감시해서 바로 팔아요.</div>
-        <div id="kisInfo" class="kv mt">확인 중…</div>
-        <button id="btnKis" class="btn primary mt" style="width:100%">연동 켜기</button>
-        <div class="title mt">한투 주문 기록</div>
-        <div id="kisList" class="list"></div>
-      </div>
-      <div class="card">
-        <div class="row between">
-          <div class="title">휴대폰 알림 (텔레그램)</div>
-          <span id="tgBadge" class="badge">OFF</span>
+        <div class="col side-col">
+          <section class="panel">
+            <header class="ph"><h2>대기 자금 (코스피200 ETF)</h2><label class="switch-row"><input type="checkbox" id="parkToggle"><span class="switch"></span></label></header>
+            <p class="ph-s">남는 현금을 KODEX 200 에 넣어 둡니다. 하락장·급락일에는 새로 넣지 않고, 하락장에선 자산의 30% 까지로 줄입니다. 끄면 다음 장중에 전부 팔아 현금으로 돌립니다.</p>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>휴대폰 알림 (텔레그램)</h2><span id="tgBadge" class="badge">OFF</span></header>
+            <div id="tgInfo" class="ph-s">확인 중</div>
+            <div class="row gap mt">
+              <button id="btnTgDetect" class="btn primary grow">채팅 연결</button>
+              <button id="btnTgTest" class="btn ghost">테스트</button>
+            </div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>실시간 감시</h2></header>
+            <div class="ph-s" id="watchSub"></div>
+            <div id="watchList" class="list"></div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>공시 즉시 반응 (DART)</h2></header>
+            <div id="dartInfo" class="ph-s">확인 중</div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>AI 설정</h2></header>
+            <div id="aiInfo" class="kv"></div>
+          </section>
+          <section class="panel">
+            <header class="ph"><h2>안전장치</h2></header>
+            <ul class="bullets">
+              <li>에이전트는 <code>tools.py</code> 외의 명령을 실행할 수 없고, 엔진·설정·원장을 고칠 수 없습니다 (고치면 자동 복구).</li>
+              <li id="policyRules"></li>
+              <li>체결은 실시간 현재가 + 슬리피지, 청산은 손절·목표·만기. 같은 날 둘 다 닿으면 손절로 봅니다.</li>
+            </ul>
+          </section>
+          <p class="disclaimer">모의투자 연구용 실험입니다. 투자 조언이 아니며, 과거 성과(모의 포함)는 미래 수익을 보장하지 않습니다. 시세는 네이버 증권 공개 데이터를 사용합니다.</p>
         </div>
-        <div class="sub">매수·청산·예측 결과가 생기면 텔레그램으로 바로 알려드려요.</div>
-        <div id="tgInfo" class="sub mt" style="line-height:1.7">확인 중…</div>
-        <div class="row gap mt">
-          <button id="btnTgDetect" class="btn primary grow">채팅 연결</button>
-          <button id="btnTgTest" class="btn ghost">테스트</button>
-        </div>
       </div>
-      <div class="card">
-        <div class="title">실시간 감시</div>
-        <div class="sub" id="watchSub">장중 1분마다 보유 종목의 손절·목표가·만기를 확인해요 (Claude 비용 없음).</div>
-        <div id="watchList" class="list mt"></div>
-      </div>
-      <div class="card">
-        <div class="title">자동 조정</div>
-        <div class="sub">성적에 따라 엔진이 스스로 설정을 바꾸고, 나빠지면 되돌려요. 안전장치(손실 한도 등)는 대상이 아니에요.</div>
-        <div id="tuneInfo" class="kv mt">확인 중…</div>
-        <div class="row gap mt">
-          <button id="btnTuneRevert" class="btn ghost grow hidden">시험 중인 설정 되돌리기</button>
-          <button id="btnDefenseReset" class="btn ghost grow hidden">방어 모드 해제</button>
-        </div>
-        <div id="tuneHist" class="list mt"></div>
-      </div>
-      <div class="card">
-        <div class="row between"><div class="title">대기 자금 (코스피200 ETF)</div>
-          <label class="switch-row"><input type="checkbox" id="parkToggle"><span class="switch"></span></label></div>
-        <div class="sub">남는 현금(자산의 95%까지)을 KODEX 200 에 넣어 두고, Phil 이 종목을 살 때 필요한 만큼 팔아서 씁니다. 켜 두면 시장만큼은 따라가고, 시장이 빠지면 같이 빠져요. 끄면 다음 장중에 전부 팔아 현금으로 돌려요.</div>
-      </div>
-      <div class="card">
-        <div class="title">공시 즉시 반응 (DART)</div>
-        <div id="dartInfo" class="sub mt" style="line-height:1.7">확인 중…</div>
-      </div>
-      <div class="card">
-        <div class="title">AI 설정</div>
-        <div id="aiInfo" class="kv"></div>
-      </div>
-      <div class="card">
-        <div class="title">안전장치</div>
-        <ul class="bullets">
-          <li>에이전트는 <code>tools.py</code> 외의 명령을 실행할 수 없고, 엔진·설정·원장을 고칠 수 없어요 (고치면 자동 복구).</li>
-          <li id="policyRules"></li>
-          <li>체결은 실시간 현재가 + 슬리피지, 청산은 일봉 기준(손절·목표·만기). 같은 날 손절·목표가 둘 다 닿으면 손절로 봐요.</li>
-          <li>시세 접속이 안 되거나 장이 닫혀 있고 새로 정산된 것도 없으면 Claude 를 부르지 않아요 (비용 0).</li>
-        </ul>
-      </div>
-      <div class="card">
-        <div class="title">사이클 기록</div>
-        <div id="cycleList" class="list"></div>
-      </div>
-      <p class="disclaimer">모의투자 연구용 실험입니다. 투자 조언이 아니며, 과거 성과(모의 포함)는 미래 수익을 보장하지 않아요. 시세는 네이버 증권 공개 데이터를 사용해요.</p>
     </section>
   </main>
 
   <nav class="bottom">
-    <button data-tab="home" class="active" aria-label="홈"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></button>
-    <button data-tab="search" aria-label="탐색"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button>
-    <button data-tab="journal" aria-label="저널"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7M9 8h4"/></svg><i id="journalDot" class="dot hidden"></i></button>
-    <button data-tab="settings" aria-label="설정"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button>
+    <button data-tab="home" class="active" aria-label="홈"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>홈</span></button>
+    <button data-tab="search" aria-label="탐색"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span>탐색</span></button>
+    <button data-tab="journal" aria-label="저널"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7M9 8h4"/></svg><span>저널</span></button>
+    <button data-tab="settings" aria-label="설정"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>설정</span></button>
   </nav>
 </div>
 
-<div id="sheet" class="sheet hidden"><div class="sheet-body"><button class="close" id="sheetClose">✕</button><div id="sheetContent"></div></div></div>
+<div id="sheet" class="sheet hidden"><div class="sheet-body"><button class="close" id="sheetClose" aria-label="닫기">✕</button><div id="sheetContent"></div></div></div>
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>
 </body>
