@@ -163,7 +163,7 @@ def feed(limit=40):
             nb = len(c.get("new_bets") or [])
             items.append({"ts": c.get("finished"), "icon": "🔁" if c.get("ok") else "⚠️", "kind": "decision",
                           "text": ("Phil 판단 · " if c.get("ok") else "사이클 오류 · ") +
-                                  ((c.get("summary") or {}).get("note") or c.get("error") or ""),
+                                  ((c.get("summary") or {}).get("note") or c.get("error") or "요약 없이 끝남 (로그 확인 필요)"),
                           "sub": f"{'매수 ' + str(nb) + '건' if nb else '매수 없음'} · 예측 {c.get('new_forecasts', 0)}건" +
                                  (f" · ${c['cost_usd']:.2f}" if c.get("cost_usd") else ""), "cycle": c.get("cycle_id")})
     items = [i for i in items if i.get("ts")]

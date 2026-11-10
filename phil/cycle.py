@@ -26,6 +26,12 @@ AUTH_HINTS = ("Failed to authenticate", "OAuth", "Invalid API key", "authenticat
 AUTH_HELP = ("Claude 로그인이 만료됐거나 키가 잘못됐어요. 터미널에서 `claude` 실행 → `/login` 으로 다시 로그인하거나, "
              ".env 에 ANTHROPIC_API_KEY 를 넣어 주세요. (이번 실행은 비용 0)")
 
+CLI_OUTDATED_HINTS = ("does not support this model", "or newer is required")
+CLI_HELP = ("서버의 Claude Code 가 오래돼서 설정한 모델을 쓸 수 없습니다. 서버에서 "
+            "`sudo npm install -g @anthropic-ai/claude-code@latest` 후 `sudo systemctl restart phil`. "
+            "그 전까지는 Claude Code 기본 모델로 대신 돌립니다.")
+UNSUPPORTED_MODELS = set()   # 이 서버의 Claude Code 가 거부한 모델 — 재시작 전까지 기본 모델로 대신 실행
+
 _lock = threading.Lock()
 FAILS = {"in_row": 0}
 CURRENT = {"running": False, "cycle_id": None, "started": None, "phase": None}
@@ -128,7 +134,7 @@ def agent_cmd(prompt):
     cmd = [claude_bin(), "-p", prompt, "--output-format", "stream-json", "--verbose",
            "--max-turns", str(cfg.get("max_turns", 80)),
            "--allowedTools", *allowed, "--disallowedTools", *disallowed]
-    if cfg.get("model"):
+    if cfg.get("model") and cfg["model"] not in UNSUPPORTED_MODELS:
         cmd += ["--model", cfg["model"]]
     return cmd
 
@@ -220,11 +226,16 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
         if api_key:  # .env 에 API 키가 있으면 그걸로 (없으면 claude 구독 로그인)
             env["ANTHROPIC_API_KEY"] = api_key
         result["auth"] = "api_key" if api_key else "login"
-        result["model"] = load_config()["cycle"].get("model") or "default"   # init 이벤트가 오면 실제 모델로 덮어씀
+        want = load_config()["cycle"].get("model")
+        if want and want in UNSUPPORTED_MODELS:
+            log(f"🧰 설정 모델 {want} 를 이 서버의 Claude Code 가 지원하지 않아 기본 모델로 대신 실행합니다")
+            want = None
+        result["model"] = want or "default"   # init 이벤트가 오면 실제 모델로 덮어씀
         env["PYTHONIOENCODING"] = "utf-8"
         timeout = load_config()["cycle"].get("timeout_minutes", 40) * 60
         summary_line = None
         auth_failed = False
+        agent_error = None
         proc = subprocess.Popen(agent_cmd(build_prompt(cycle_id, settled, mode, why, events)), cwd=ROOT,
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
@@ -242,10 +253,14 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
                     log(raw[:500])
                     if any(h in raw for h in AUTH_HINTS):
                         auth_failed = True
+                    if raw.startswith("API Error") or any(h in raw for h in CLI_OUTDATED_HINTS):
+                        agent_error = raw[:400]
                     continue
                 if ev.get("type") == "result" and ev.get("is_error") and \
                         any(h in str(ev.get("result", "")) for h in AUTH_HINTS):
                     auth_failed = True
+                if ev.get("type") == "result" and (ev.get("is_error") or str(ev.get("result", "")).startswith("API Error")):
+                    agent_error = str(ev.get("result") or ev.get("subtype") or "에이전트 오류")[:400]
                 line = _summarize_event(ev)
                 if line:
                     log(line)
@@ -264,6 +279,14 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
         if auth_failed:
             log("🔑 " + AUTH_HELP)
             result.update(ok=False, error=AUTH_HELP, error_kind="auth")
+        elif agent_error and any(h in agent_error for h in CLI_OUTDATED_HINTS):
+            if load_config()["cycle"].get("model"):
+                UNSUPPORTED_MODELS.add(load_config()["cycle"]["model"])
+            log("🧰 " + CLI_HELP)
+            result.update(ok=False, error=CLI_HELP + " (" + agent_error[:200] + ")", error_kind="cli_outdated")
+        elif agent_error or (proc.returncode not in (0, None) and not summary_line):
+            # 에이전트가 아무 일도 못 하고 끝났는데 "정상 종료" 로 기록되는 일이 없게
+            result.update(ok=False, error=(agent_error or f"에이전트가 종료 코드 {proc.returncode} 로 끝남")[:400])
 
         CURRENT["phase"] = "검증"
         reverted = guard.restore(snap)
@@ -302,7 +325,7 @@ def _alert_on_failure(result):
         FAILS["in_row"] = 0
         return
     FAILS["in_row"] += 1
-    if result.get("error_kind") == "auth" or FAILS["in_row"] == 2:
+    if result.get("error_kind") in ("auth", "cli_outdated") or FAILS["in_row"] == 2:
         notify.alert(f"⚠️ Phil 사이클 실패 ({FAILS['in_row']}번 연속): {result.get('error', '')[:300]}")
 
 

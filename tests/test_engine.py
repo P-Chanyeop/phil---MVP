@@ -902,3 +902,53 @@ class TestDayResults(Tmp):
         with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "하락장", "kospi_vs_ma60": -9}):
             self.assertFalse(score.buy_gap()["alert"])               # 하락장에선 안 사는 게 정상
 
+
+class TestAgentFailureDetection(Tmp):
+    def _run(self, script):
+        import sys
+        from phil import cycle
+        for name, val in [("CYCLES_LOG", self.d / "cyc.jsonl"), ("CYCLE_LOGS", self.d / "logs")]:
+            mock.patch.object(cycle, name, val).start()
+        mock.patch("phil.naver.ping", lambda: (True, "ok")).start()
+        mock.patch("phil.score.ensure_meta", lambda: None).start()
+        mock.patch("phil.resolve.settle_all", lambda: {"closed": [], "forecasts_settled": [], "calib_settled": [],
+                                                       "still_open": 0, "forecasts_open": 0, "errors": []}).start()
+        mock.patch("phil.market.trading_window", lambda now=None: (True, "장중")).start()
+        mock.patch("phil.cycle.claude_bin", lambda: "/bin/true").start()
+        mock.patch("phil.guard.snapshot", lambda: {}).start()
+        mock.patch("phil.guard.restore", lambda snap: []).start()
+        mock.patch("phil.notify.alert", lambda msg: self.alerts.append(msg)).start()
+        self.alerts = []
+        seen = []
+        mock.patch("phil.cycle.agent_cmd", lambda prompt: seen.append(1) or [sys.executable, "-c", script]).start()
+        return cycle.run_cycle()
+
+    def test_outdated_cli_is_failure_and_falls_back(self):
+        from phil import cycle
+        cycle.UNSUPPORTED_MODELS.clear()
+        script = ("import sys,json;print('API Error: 400 Claude Code 2.1.197 does not support this model; version 2.1.280 or newer is required.');"
+                  "print(json.dumps({'type':'result','subtype':'success','is_error':True,'num_turns':1,'total_cost_usd':0,"
+                  "'result':'API Error: 400 Claude Code 2.1.197 does not support this model'}));sys.exit(1)")
+        with mock.patch("phil.cycle.load_config", lambda: {**config.load_config(), "cycle": {**config.load_config()["cycle"], "model": "claude-opus-5-5"}}):
+            r = self._run(script)
+            self.assertFalse(r["ok"])                                   # "정상 종료" 로 남지 않음
+            self.assertEqual(r["error_kind"], "cli_outdated")
+            self.assertTrue(self.alerts)                                # 바로 알림
+            self.assertIn("claude-opus-5-5", cycle.UNSUPPORTED_MODELS)
+        mock.patch.stopall()
+        with mock.patch("phil.cycle.claude_bin", lambda: "claude"):
+            self.assertNotIn("claude-opus-5-5", cycle.agent_cmd("x"))     # 다음 사이클은 기본 모델로
+            cycle.UNSUPPORTED_MODELS.clear()
+            cfg_model = config.load_config()["cycle"]["model"]
+            self.assertIn(cfg_model, cycle.agent_cmd("x"))               # 재시작하면 다시 설정 모델
+
+    def test_silent_nonzero_exit_is_failure(self):
+        r = self._run("import sys;sys.exit(2)")
+        self.assertFalse(r["ok"])
+        self.assertIn("종료 코드 2", r["error"])
+
+    def test_normal_run_ok(self):
+        r = self._run("import json;print(json.dumps({'type':'result','subtype':'success','num_turns':3,'total_cost_usd':0.5,"
+                      "'result':'끝\\nPHIL_SUMMARY {\\\"note\\\": \\\"관망\\\"}'}))")
+        self.assertTrue(r["ok"], r.get("error"))
+
