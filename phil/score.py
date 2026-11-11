@@ -73,6 +73,7 @@ def report(kospi_now=None):
         "by_model": policy.by_model(),
         "days": day_results(),
         "buy_gap": buy_gap(),
+        "forecast_gap": forecast_gap(),
         "banned_edge_classes": policy.banned_edge_classes(cfg),
         "verified_edge_classes": verified_edge_classes(by_class),
         "forecasts": {"total": len(fc), "open": sum(1 for r in fc if r["status"] == "open"),
@@ -124,6 +125,18 @@ def buy_gap():
     bear = bool(rg and rg["label"] == "하락장")
     return {"last_buy_date": last, "trading_days_since": gap, "bear_market": bear,
             "alert": gap >= limit and not bear, "limit": limit}
+
+
+def forecast_gap(now=None):
+    """오늘 장중(FULL) 사이클 수 대비 새 예측 수. 예측이 너무 적으면 실력을 잴 수 없다."""
+    from . import market
+    today = (now or now_kst()).date().isoformat()
+    full = [c for c in load_jsonl(CYCLES_LOG) if c.get("mode") == "FULL" and c.get("ok")
+            and c.get("started") and market.kst_date(c["started"]) == today]
+    n_fc = sum(c.get("new_forecasts") or 0 for c in full)
+    target = load_config()["policy"].get("forecasts_per_full_cycle", 8)
+    return {"full_cycles_today": len(full), "forecasts_today": n_fc, "target_per_cycle": target,
+            "alert": len(full) >= 2 and n_fc < target * len(full) / 2}
 
 
 def breakdown(prices=None):
@@ -233,6 +246,7 @@ def scorecard():
         "question_to_ask_yourself": "오늘 장이 끝났을 때 계좌가 늘었나? 지금 방식이 이긴 날을 늘리고 있나, 아니면 무엇을 바꿀 것인가?",
         "day_results": day_results(),
         "buy_gap": buy_gap(),
+        "forecast_gap": forecast_gap(),
         "last_5_days": tuning.window(5), "last_10_days": tuning.window(10),
         "by_source": src,
         "by_edge_class": {k: bucket(v) for k, v in by_class.items()},

@@ -959,3 +959,18 @@ class TestAgentFailureDetection(Tmp):
                       "'result':'끝\\nPHIL_SUMMARY {\\\"note\\\": \\\"관망\\\"}'}))")
         self.assertTrue(r["ok"], r.get("error"))
 
+
+class TestForecastGap(Tmp):
+    def test_alert_when_few_forecasts(self):
+        from phil import score
+        cyc = self.d / "cyc.jsonl"
+        mock.patch.object(score, "CYCLES_LOG", cyc).start()
+        now = dt.datetime(2026, 11, 11, 14, 0, tzinfo=KST)
+        for h, n in [(0, 0), (2, 1)]:
+            config.append_jsonl(cyc, {"mode": "FULL", "ok": True, "started": f"2026-11-11T0{h}:30:00Z", "new_forecasts": n})
+        g = score.forecast_gap(now)
+        self.assertEqual((g["full_cycles_today"], g["forecasts_today"]), (2, 1))
+        self.assertTrue(g["alert"])
+        config.append_jsonl(cyc, {"mode": "FULL", "ok": True, "started": "2026-11-11T04:30:00Z", "new_forecasts": 20})
+        self.assertFalse(score.forecast_gap(now)["alert"])
+

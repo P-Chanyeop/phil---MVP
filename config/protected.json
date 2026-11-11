@@ -67,7 +67,9 @@
     "bear_case_min_chars": 30,
     "_comment_bear_case": "에이전트 매수에는 반대 논리(--bear-case: 이미 가격에 반영됐을 이유·산 뒤 빠질 이유)가 필수. 회고에서 반대 논리가 맞았는지 채점한다.",
     "inactivity_alert_days": 3,
-    "_comment_inactivity": "하락장이 아닌데 에이전트 매수가 이 거래일 수만큼 없으면 화면·회고에 경고 (소심해지는 걸 감시)."
+    "_comment_inactivity": "하락장이 아닌데 에이전트 매수가 이 거래일 수만큼 없으면 화면·회고에 경고 (소심해지는 걸 감시).",
+    "forecasts_per_full_cycle": 8,
+    "_comment_forecasts": "장중 사이클마다 예측 최소 건수(운영자 지시). 오늘 장중 사이클 2번 이상인데 목표의 절반도 안 되면 화면·회고에 경고."
   },
   "cycle": {
     "model": "claude-opus-5-5",

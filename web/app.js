@@ -134,6 +134,8 @@ function renderState(S) {
   if (S.operator?.park_enabled === false) rows.push(stateRow("💤", "대기 자금 꺼짐 — 남는 현금은 그대로 둡니다"));
   else if (g.reason) rows.push(stateRow("💤", `대기 자금 <b>새로 안 넣음</b> — ${esc(g.reason)}${/하락장/.test(g.reason) ? " · 자산의 30% 까지로 줄입니다" : ""}`, "warnrow"));
   else rows.push(stateRow("💤", `대기 자금 투입 가능 — 남는 현금은 한 번에 자산의 25% 씩 코스피200 에 넣습니다${pk.qty ? ` (지금 ${won(pk.value_krw)})` : ""}`));
+  const fg = S.score?.forecast_gap;
+  if (fg?.alert) rows.push(stateRow("🔮", `오늘 장중 사이클 ${fg.full_cycles_today}번에 예측 ${fg.forecasts_today}건 — 목표(사이클당 ${fg.target_per_cycle}건)에 크게 못 미칩니다. 예측이 쌓여야 실력을 잴 수 있습니다`, "warnrow"));
   const bg = S.score?.buy_gap;
   if (bg?.alert) rows.push(stateRow("💤", `${bg.trading_days_since}거래일째 매수 없음 — 하락장도 아닌데 Phil 이 안 사고 있습니다. 다음 회고에서 이유를 점검합니다`, "warnrow"));
   if (S.buy_pause) rows.push(stateRow("⛔", `안전장치 — ${esc(S.buy_pause)}`, "badrow"));
