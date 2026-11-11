@@ -942,6 +942,13 @@ class TestAgentFailureDetection(Tmp):
             cfg_model = config.load_config()["cycle"]["model"]
             self.assertIn(cfg_model, cycle.agent_cmd("x"))               # 재시작하면 다시 설정 모델
 
+    def test_harmless_oauth_warning_is_not_auth_failure(self):
+        r = self._run("import json;print(\"[mcp-sdk] SEP-2352: stored OAuth credential has no 'issuer' stamp\");"
+                      "print(json.dumps({'type':'result','subtype':'success','num_turns':5,'total_cost_usd':0.36,"
+                      "'result':'PHIL_SUMMARY {\\\"note\\\": \\\"관망\\\"}'}))")
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(self.alerts, [])
+
     def test_silent_nonzero_exit_is_failure(self):
         r = self._run("import sys;sys.exit(2)")
         self.assertFalse(r["ok"])

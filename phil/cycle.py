@@ -21,8 +21,8 @@ from .config import (CYCLE_LOGS, CYCLES_LOG, FORECASTS, LEDGER, ROOT, STRATEGY,
                      STRATEGY_HISTORY, append_jsonl, iso, load_config, load_env, load_jsonl,
                      now_kst, now_utc, operator_state)
 
-AUTH_HINTS = ("Failed to authenticate", "OAuth", "Invalid API key", "authentication_error",
-              "Please run /login", "not logged in", "401")
+AUTH_HINTS = ("Failed to authenticate", "OAuth token has expired", "OAuth token revoked", "Invalid API key",
+              "authentication_error", "Please run /login", "not logged in", "401 Unauthorized", "API Error: 401")
 AUTH_HELP = ("Claude 로그인이 만료됐거나 키가 잘못됐어요. 터미널에서 `claude` 실행 → `/login` 으로 다시 로그인하거나, "
              ".env 에 ANTHROPIC_API_KEY 를 넣어 주세요. (이번 실행은 비용 0)")
 
@@ -276,6 +276,8 @@ def run_cycle(force_agent=False, mode_override=None, events=None):
         finally:
             timer.cancel()
         result["exit_code"] = proc.returncode
+        if auth_failed and (summary_line or (result.get("cost_usd") or 0) > 0):
+            auth_failed = False   # 실제로 일을 했으면 로그의 인증 관련 경고 문구는 오탐 (예: MCP SDK 의 OAuth 경고)
         if auth_failed:
             log("🔑 " + AUTH_HELP)
             result.update(ok=False, error=AUTH_HELP, error_kind="auth")
