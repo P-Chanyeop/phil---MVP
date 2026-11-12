@@ -55,13 +55,16 @@ def record_daily(now=None):
 MIN_WINDOW_DAYS = 3
 
 
-def window(days, end_index=None, min_days=MIN_WINDOW_DAYS):
+def window(days, end_index=None, min_days=MIN_WINDOW_DAYS, require_ex_park=False):
     """최근 days 거래일 성과 (종목 기준: 대기 자금 ETF 손익 제외): (비용 전 손익, 비용, 비용 후 수익률 %).
     기록이 days 보다 짧으면 있는 만큼(최소 min_days 거래일)으로 계산하고 partial=True 를 붙인다
     — 시작 직후 2주 동안 방어 모드·비용 절감이 전부 꺼져 있지 않도록. min_days 도 안 되면 None."""
     rows = load_jsonl(DAILY)
     if end_index is not None:
         rows = rows[:end_index + 1]
+    if require_ex_park:   # 대기 자금 손익을 뺄 수 있는 기록(park_total_pnl)만 — 옛 기록이 섞이면 ETF 손실로 오판한다
+        cut = max([i for i, r in enumerate(rows) if "park_total_pnl" not in r], default=-1)
+        rows = rows[cut + 1:]
     if len(rows) < min_days + 1:
         return None
     partial = len(rows) < days + 1
@@ -85,22 +88,41 @@ def window(days, end_index=None, min_days=MIN_WINDOW_DAYS):
 
 # ───────────── 1) 방어 모드 ─────────────
 
+def fix_wrong_defense():
+    """대기 자금(ETF) 손익이 섞인 옛 기록으로 켜졌던 방어 모드를 해제 (서버 시작 때도 부른다)."""
+    s = _state()
+    if s["defense"].get("level", 0) > 0 and (s["defense"].get("why") or {}).get("ex_park") is False:
+        s["defense"] = {"level": 0, "since": iso(), "why": {"reset": "ETF 손익이 섞인 기록으로 켜졌던 방어 모드 해제"}}
+        m = "🟢 방어 모드 해제: 대기 자금(ETF) 손실까지 섞인 옛 기록으로 잘못 켜져 있었음"
+        _log(s, "defense", m)
+        save_json(TUNING, s)
+        return [m]
+    return []
+
+
 def check_defense():
+    """종목 기준(대기 자금 제외) 성과로 방어 모드를 한 단계씩 조정. 하루에 한 번만 바뀐다."""
     cfg = load_base_config()["defense"]
-    w = window(cfg["window_days"])
-    if not w:
-        return []
+    fixed = fix_wrong_defense()
+    if fixed:
+        return fixed
     s = _state()
     lvl = s["defense"].get("level", 0)
     msgs = []
+    w = window(cfg["window_days"], require_ex_park=True)
+    if not w:
+        return []
+    today = now_kst().date().isoformat()
+    if s["defense"].get("date") == today:   # 같은 날 두 번 오르내리지 않게
+        return []
     if w["after_cost_pct"] < cfg["enter_below_pct"] and lvl < 2:
-        s["defense"] = {"level": lvl + 1, "since": iso(), "why": w}
+        s["defense"] = {"level": lvl + 1, "since": iso(), "date": today, "why": w}
         m = (f"🛡️ 방어 모드 {lvl + 1}단계: 최근 {cfg['window_days']}거래일 비용 차감 후 {w['after_cost_pct']:+.2f}% → "
              f"매수 크기를 줄이고 기준을 높였어요")
         _log(s, "defense", m)
         msgs.append(m)
     elif w["after_cost_pct"] > cfg["exit_above_pct"] and lvl > 0:
-        s["defense"] = {"level": lvl - 1, "since": iso(), "why": w}
+        s["defense"] = {"level": lvl - 1, "since": iso(), "date": today, "why": w}
         m = f"🟢 방어 모드 {lvl}→{lvl - 1}단계로 완화: 최근 {cfg['window_days']}거래일 비용 차감 후 {w['after_cost_pct']:+.2f}%"
         _log(s, "defense", m)
         msgs.append(m)

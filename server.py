@@ -422,6 +422,11 @@ def main():
             raise SystemExit("외부 접속을 열려면 .env 에 PHIL_WEB_TOKEN(12자 이상)을 설정하세요.")
     for d in (RETROS, CYCLE_LOGS):
         d.mkdir(parents=True, exist_ok=True)
+    try:
+        for m in tuning.fix_wrong_defense():
+            print(m)
+    except Exception as e:  # noqa: BLE001
+        print("방어 모드 점검 실패:", e)
     AUTO = cycle.AutoLoop()
     watch.Jobs.on_event_cycle = AUTO.event_cycle
     watch.Watcher(60)

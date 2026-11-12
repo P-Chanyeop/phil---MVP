@@ -713,19 +713,25 @@ class TestUpgrades(Tmp):
 
 
 class TestTuning(Tmp):
-    def days(self, equities, cost_per_day=0.0):
+    def days(self, equities, cost_per_day=0.0, legacy=False):
         rows = [{"date": f"2026-10-{i + 1:02d}", "equity": e, "cost_usd_total": i * cost_per_day, "kospi": 100}
                 for i, e in enumerate(equities)]
+        if not legacy:
+            for r in rows:
+                r["park_total_pnl"] = 0
         config.dump_jsonl(self.d / "daily.jsonl", rows)
 
     def test_defense_levels_and_overlay(self):
         base = config.load_config()["limits"]["max_position_pct"]
         self.days([10_000_000] + [9_800_000] * 10)               # 10일 -2%
         self.assertTrue(tuning.check_defense())
+        self.assertEqual(tuning.check_defense(), [])             # 같은 날 두 번 오르지 않음
+        self.assertEqual(tuning._state()["defense"]["level"], 1)
         cfg = config.load_config()
         self.assertAlmostEqual(cfg["limits"]["max_position_pct"], base * 0.5)
         self.assertEqual(cfg["policy"]["exploration"]["max_per_day"], 1)
         self.days([9_800_000] + [9_900_000] * 10)                # 회복 +1%
+        st = tuning._state(); st["defense"]["date"] = "2000-01-01"; config.save_json(tuning.TUNING, st)   # 다음 날
         tuning.check_defense()
         self.assertAlmostEqual(config.load_config()["limits"]["max_position_pct"], base)
 
@@ -738,6 +744,16 @@ class TestTuning(Tmp):
         self.assertEqual(w["days"], 3)
         self.assertAlmostEqual(w["after_cost_pct"], -1.5, places=1)
         self.assertTrue(tuning.check_defense())                    # 시작 직후에도 방어 모드가 켜질 수 있다
+
+    def test_defense_ignores_legacy_rows_and_resets_wrong_defense(self):
+        self.days([10_000_000] + [9_700_000] * 10, legacy=True)   # ETF 손익을 뺄 수 없는 옛 기록
+        self.assertEqual(tuning.check_defense(), [])              # 판단 안 함
+        st = tuning._state()
+        st["defense"] = {"level": 2, "since": "x", "why": {"ex_park": False, "after_cost_pct": -2.1}}
+        config.save_json(tuning.TUNING, st)
+        msg = tuning.check_defense()
+        self.assertIn("해제", msg[0])
+        self.assertEqual(tuning._state()["defense"]["level"], 0)
 
     def test_window_excludes_park_etf_swings(self):
         rows = [{"date": f"2026-10-{i + 1:02d}", "equity": e, "cost_usd_total": 0, "kospi": 100, "park_total_pnl": p}
@@ -988,4 +1004,28 @@ class TestForecastGap(Tmp):
         self.assertTrue(g["alert"])
         config.append_jsonl(cyc, {"mode": "FULL", "ok": True, "started": "2026-11-11T04:30:00Z", "new_forecasts": 20})
         self.assertFalse(score.forecast_gap(now)["alert"])
+
+
+class TestEventDoesNotStarveRegular(Tmp):
+    def test_event_keeps_regular_schedule(self):
+        from phil import cycle
+        config.save_operator_state({"auto_loop": True, "loop_minutes": 120})
+        loop = cycle.AutoLoop.__new__(cycle.AutoLoop)
+        loop.next_run, loop.post_close_done, loop.audit_week, loop.event_starts = None, None, None, []
+        t0 = 1_000_000.0
+        loop.next_run = t0 + 60 * 60                                   # 정규 사이클 1시간 뒤 예정
+        mock.patch("phil.cycle.threading.Thread", lambda target, **kw: type("T", (), {"start": lambda self: None})()).start()
+        mock.patch("phil.cycle.LAST_START", {"t": 0}).start()
+        with mock.patch("phil.cycle.time.time", lambda: t0):
+            loop.event_cycle([{"rcept_no": "1"}])
+        self.assertEqual(loop.next_run, t0 + 60 * 60)                  # 공시 사이클이 정규를 밀지 않음
+        loop.next_run = t0 + 5 * 60
+        with mock.patch("phil.cycle.time.time", lambda: t0 + 31 * 60):
+            loop.event_starts = []
+            loop.event_cycle([{"rcept_no": "2"}])
+        self.assertEqual(loop.next_run, t0 + 46 * 60)                  # 겹치면 공시 끝나고 15분 뒤
+        with mock.patch("phil.cycle.run_cycle", lambda: {"ok": False, "error": "이미 사이클이 실행 중입니다"}), \
+                mock.patch("phil.cycle.time.time", lambda: t0):
+            loop._regular()
+        self.assertEqual(loop.next_run, t0 + 10 * 60)                  # 못 돌았으면 10분 뒤 재시도
 

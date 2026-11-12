@@ -391,7 +391,7 @@ class AutoLoop:
                     return
             if self.next_run is None or time.time() >= self.next_run:
                 self.next_run = time.time() + gap
-                threading.Thread(target=run_cycle, daemon=True).start()
+                threading.Thread(target=self._regular, daemon=True).start()
             return
         self.next_run = None
         post = load_config()["cycle"].get("post_close_time", "15:45")
@@ -404,6 +404,12 @@ class AutoLoop:
         if now.weekday() == 5 and hhmm >= "10:00" and self.audit_week != week:
             self.audit_week = week
             threading.Thread(target=run_cycle, kwargs={"mode_override": "AUDIT"}, daemon=True).start()
+
+    def _regular(self):
+        """정규 사이클. 다른 사이클과 겹쳐 못 돌았으면 10분 뒤 다시 (2시간 건너뛰지 않게)."""
+        r = run_cycle()
+        if not r.get("ok") and "이미 사이클이 실행 중" in str(r.get("error", "")):
+            self.next_run = time.time() + 10 * 60
 
     def event_cycle(self, disclosures):
         """공시가 뜨면 사이클을 앞당김. 자동 반복이 켜져 있을 때만, 간격·하루 횟수 제한."""
@@ -420,6 +426,9 @@ class AutoLoop:
         if now - last < cfg["min_gap_minutes"] * 60:   # 정규 사이클 포함, 마지막 사이클 시작 후 30분
             return
         self.event_starts.append((today, now))
-        self.next_run = now + max(15, int(st.get("loop_minutes", 60))) * 60  # 정규 사이클은 뒤로 미룸
+        # 정규 사이클은 미루지 않는다 (전엔 공시마다 2시간씩 밀려 공시 많은 날 정규 사이클이 하루 1번뿐이었다).
+        # 공시 사이클이 도는 동안은 _tick 이 기다렸다가, 끝나고 최소 15분 뒤 정규 사이클을 돈다.
+        if self.next_run is not None and self.next_run < now + 15 * 60:
+            self.next_run = now + 15 * 60
         threading.Thread(target=run_cycle, kwargs={"mode_override": "EVENT", "events": disclosures},
                          daemon=True).start()
