@@ -145,6 +145,18 @@ class TestBuy(Tmp):
         self.assertLessEqual(w["cost_krw"], 1_000_000)      # 부정확한 유형은 절반(10%)
         self.assertIn("x0.5", w["size_notes"][0])
 
+    def test_exploration_cap_lower_in_bear_market(self):
+        codes = ["000660", "035420", "051910", "005380"]
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ["005930"] + codes}
+        mock.patch("phil.naver.sector", lambda c: {"code": c, "name": c}).start()
+        mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "하락장", "kospi_vs_ma60": -15}).start()
+        with mock.patch("phil.market.universe", lambda refresh=False: uni):
+            for c in ["005930", "000660", "035420"]:
+                self.assertTrue(self.buy(est=0.54, code=c)["exploration"])   # 하락장에서도 탐색은 한다
+            with self.assertRaises(ledger.Rejected) as cm:                   # 하루 3건까지
+                self.buy(est=0.54, code="051910")
+            self.assertIn("하락장", str(cm.exception))
+
     def test_bear_case_required_on_agent_path(self):
         with self.assertRaises(ledger.Rejected) as cm:
             self.buy(bear_case="짧음")

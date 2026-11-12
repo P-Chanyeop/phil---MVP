@@ -140,8 +140,12 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
                            f"< 탐색 최소 {exp.get('min_edge', pol['min_edge_vs_base_rate'])}")
         today = market.kst_date(iso())
         n_today = sum(1 for x in entries if x.get("exploration") and market.kst_date(x["ts"]) == today)
-        if n_today >= exp["max_per_day"]:
-            raise Rejected(f"오늘 탐색 매수 한도({exp['max_per_day']}건) 도달 — 엣지 {edge:+.3f} 는 "
+        cap = exp["max_per_day"]
+        rg = market.regime_now() if exp.get("bear_max_per_day") is not None else None
+        if rg and rg.get("label") == "하락장":
+            cap = min(cap, exp["bear_max_per_day"])
+        if n_today >= cap:
+            raise Rejected(f"오늘 탐색 매수 한도({cap}건{', 하락장' if cap < exp['max_per_day'] else ''}) 도달 — 엣지 {edge:+.3f} 는 "
                            f"정규 매수 기준 {pol['min_edge_vs_base_rate']} 미만")
         exploration = True
 
