@@ -303,10 +303,10 @@ async function loadJournal() {
   const bm = sc.by_model || {};
   $("#modelTable").innerHTML = Object.entries(bm).map(([m, v]) => {
     const f = v.forecast || {}, t = v.trades || {};
-    const verdict = f.n ? (f.brier_delta < 0 ? `<span class="up">기저율보다 정확</span>` : `<span class="down">기저율보다 부정확</span>`) : `<span class="sub">정산된 예측 없음</span>`;
+    const verdict = f.n ? (f.brier_delta < 0 ? `<span class="up">기저율보다 정확</span>` : `<span class="down">기저율보다 부정확</span>`) : `<span class="sub">아직 결과 나온 예측 없음 (예측 기간 1~5일 뒤 정산)</span>`;
     return `<div class="item"><div class="q">${esc(m)} <span class="sub">${v.since ? new Date(v.since).toLocaleDateString("ko-KR") + "부터" : ""}</span></div>
-      <div class="meta"><span>예측 ${f.n || 0}건 · ${verdict}${f.n ? ` (Δ ${f.brier_delta > 0 ? "+" : ""}${f.brier_delta.toFixed(4)}, 적중 ${pct(f.hit_rate)})` : ""}</span></div>
-      <div class="meta"><span>청산 ${t.n}건${t.n ? ` · 승 ${t.wins} · <span class="${ud(t.pnl_krw)}">${won(t.pnl_krw, 1)}</span> · 평균 ${sp(t.avg_ret_pct)}` : ""}</span></div></div>`;
+      <div class="meta"><span>예측 정산 ${f.n || 0}건${v.forecasts_open ? ` · 결과 대기 ${v.forecasts_open}건` : ""} · ${verdict}${f.n ? ` (Δ ${f.brier_delta > 0 ? "+" : ""}${f.brier_delta.toFixed(4)}, 적중 ${pct(f.hit_rate)})` : ""}</span></div>
+      <div class="meta"><span>매매 청산 ${t.n}건${v.trades_open ? ` · 보유 중 ${v.trades_open}건` : ""}${t.n ? ` · 승 ${t.wins} · <span class="${ud(t.pnl_krw)}">${won(t.pnl_krw, 1)}</span> · 평균 ${sp(t.avg_ret_pct)}` : ""}</span></div></div>`;
   }).join("") || `<div class="empty">아직 기록이 없습니다.</div>`;
   $("#catTable").innerHTML = keys.map((k) => { const c = byCal[k], b = banned[k];
     return `<div class="item"><div class="q">${esc(k)} ${b ? '<span class="chip bad">매수 금지</span>' : c && c.n >= 10 && c.brier_delta < 0 ? '<span class="chip good">기저율보다 정확</span>' : ""}</div>

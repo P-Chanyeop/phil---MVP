@@ -840,6 +840,9 @@ class TestByModel(Tmp):
         self.assertGreater(bm["sonnet-5-5"]["forecast"]["brier_delta"], 0)
         self.assertLess(bm["opus-5-5"]["forecast"]["brier_delta"], 0)
         self.assertEqual(bm["opus-5-5"]["forecast"]["n"], 4)
+        config.append_jsonl(forecast.FORECASTS, {"id": "o1", "cycle_id": "new", "code": "000660", "est_prob": 0.4, "base_rate": 0.5,
+                                                 "edge_class": "momentum", "status": "open"})
+        self.assertEqual(policy.by_model()["opus-5-5"]["forecasts_open"], 1)   # 결과 대기 중인 예측도 센다
 
 
 class TestVariantsAndFilterAges(Tmp):

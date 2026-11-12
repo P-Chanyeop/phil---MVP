@@ -55,10 +55,13 @@ def by_model():
     예측·매매는 그것을 만든 사이클의 모델로 묶는다 (수동·규칙 매매는 제외)."""
     cm = cycle_models()
     fc, tr = defaultdict(list), defaultdict(list)
+    fc_open, tr_open = defaultdict(int), defaultdict(int)
     for r in load_jsonl(FORECASTS):
         m = cm.get(r.get("cycle_id"))
         if m and r["status"] in ("up", "down"):
             fc[m].append((r["est_prob"], r["base_rate"], r["status"] == "up", r["edge_class"]))
+        elif m and r["status"] == "open":
+            fc_open[m] += 1
     for e in load_jsonl(LEDGER):
         m = cm.get(e.get("cycle_id"))
         if not m:
@@ -67,6 +70,8 @@ def by_model():
             fc[m].append((e["est_prob"], e["base_rate"], e["calib"] == "up", e["edge_class"]))
         if e["status"] == "closed":
             tr[m].append(e)
+        elif e["status"] == "open":
+            tr_open[m] += 1
     first = {}
     for c in load_jsonl(CYCLES_LOG):
         if c.get("cycle_id") and c.get("started"):
@@ -75,6 +80,7 @@ def by_model():
     for m in sorted(set(fc) | set(tr) | set(first), key=lambda k: first.get(k, "")):
         rows = tr.get(m, [])
         out[m] = {"since": first.get(m), "forecast": brier(fc.get(m, [])) or {"n": 0},
+                  "forecasts_open": fc_open.get(m, 0), "trades_open": tr_open.get(m, 0),
                   "trades": {"n": len(rows), "wins": sum(1 for e in rows if e["pnl_krw"] > 0),
                              "pnl_krw": sum(e["pnl_krw"] for e in rows),
                              "avg_ret_pct": round(sum(e["ret_pct"] for e in rows) / len(rows), 2) if rows else None}}
