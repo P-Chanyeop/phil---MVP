@@ -132,6 +132,15 @@ def check_edge_class(edge_class, cfg=None):
     return None
 
 
+def calibration_by_class_up():
+    """근거 유형별 '오른다' 예측(내 확률 > 기저율)만의 정확도 — 매수는 이쪽으로만 하므로 매수 크기의 근거."""
+    g = defaultdict(list)
+    for r in _rows():
+        if r[0] > r[1]:
+            g[r[3]].append(r)
+    return {k: brier(v) for k, v in sorted(g.items())}
+
+
 def size_factor(edge_class, cfg=None):
     """근거 유형의 예측 정확도에 따라 정규 매수 크기를 조절.
     반환 (max_pct 또는 None, factor, 설명). max_pct 가 있으면 그 비율(자산 대비)로 상한, factor 는 곱."""
@@ -139,13 +148,14 @@ def size_factor(edge_class, cfg=None):
     sa = cfg["policy"].get("sizing_by_accuracy")
     if not sa:
         return None, 1.0, ""
-    s = calibration_by_class().get(edge_class)
+    # 매수는 '오른다' 예측이므로 그 방향의 성적만 본다 (하락장에서 '내린다' 예측이 잘 맞아 매수 크기가 커지는 일 방지)
+    s = calibration_by_class_up().get(edge_class)
     n = s["n"] if s else 0
     if n < sa["min_n"]:
-        return sa["unproven_pct"], 1.0, f"미검증 근거 유형 '{edge_class}' (정산 {n}건 < {sa['min_n']}) → 자산의 {sa['unproven_pct']:.0%} 까지"
+        return sa["unproven_pct"], 1.0, f"미검증 근거 유형 '{edge_class}' ('오른다' 예측 정산 {n}건 < {sa['min_n']}) → 자산의 {sa['unproven_pct']:.0%} 까지"
     if s["brier_delta"] > 0:
-        return None, sa["worse_factor"], f"'{edge_class}' 는 기저율보다 부정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 크기 x{sa['worse_factor']}"
-    return None, 1.0, f"'{edge_class}' 기저율보다 정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 원래 크기"
+        return None, sa["worse_factor"], f"'{edge_class}' 의 '오른다' 예측이 기저율보다 부정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 크기 x{sa['worse_factor']}"
+    return None, 1.0, f"'{edge_class}' 의 '오른다' 예측이 기저율보다 정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 원래 크기"
 
 
 def summary():

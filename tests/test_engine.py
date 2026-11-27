@@ -126,10 +126,10 @@ class TestBuy(Tmp):
         self.assertIn("미검증", big["size_notes"][0])
 
     def _settled_forecasts(self, edge_class, n, good):
-        """정산된 예측 n건: good 이면 기저율보다 정확(맞힌 쪽에 0.7), 아니면 부정확(틀린 쪽에 0.7)."""
+        """정산된 '오른다' 예측 n건 (0.7, 기저율 0.5): good 이면 4건 중 3건 상승(기저율보다 정확), 아니면 4건 중 1건."""
         for i in range(n):
-            up = i % 2 == 0
-            p = (0.7 if up else 0.3) if good else (0.3 if up else 0.7)
+            up = (i % 4 != 0) if good else (i % 4 == 0)
+            p = 0.7
             config.append_jsonl(forecast.FORECASTS, {"id": f"f{i}", "code": "005930", "est_prob": p, "base_rate": 0.5,
                                                      "edge_class": edge_class, "status": "up" if up else "down"})
 
@@ -170,6 +170,20 @@ class TestBuy(Tmp):
         self.assertAlmostEqual(e["stop_price"], 90.0, delta=0.5)
         self.assertAlmostEqual(e["size_pct"], calm["size_pct"] * 0.4, places=3)   # 위험 같게: 4%/10%
         self.assertTrue(any("잡음 손절" in n for n in e["size_notes"]))
+
+    def test_min_buy_prob(self):
+        with self.assertRaises(ledger.Rejected) as cm:
+            self.buy(est=0.48)                    # 기저율(0.5) 보다 낮아도, 높아도 0.5 미만이면 거부
+        self.assertIn("0.48", str(cm.exception))
+        self.assertTrue(self.buy(est=0.53)["exploration"])
+
+    def test_sizing_ignores_down_calls(self):
+        for i in range(12):                       # '내린다' 예측만 아주 잘 맞음
+            config.append_jsonl(forecast.FORECASTS, {"id": f"d{i}", "code": "005930", "est_prob": 0.3, "base_rate": 0.5,
+                                                     "edge_class": "earnings", "status": "down"})
+        e = self.buy(est=0.62)
+        self.assertLessEqual(e["cost_krw"], 500_000)                  # '오른다' 예측은 0건 → 미검증 5%
+        self.assertIn("'오른다' 예측 정산 0건", e["size_notes"][0])
 
     def test_bear_case_required_on_agent_path(self):
         with self.assertRaises(ledger.Rejected) as cm:

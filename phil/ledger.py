@@ -107,6 +107,10 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         raise Rejected("목표 수익률은 양수")
     if not 0.0 < est_prob < 1.0:
         raise Rejected("est-prob 는 (0,1) 범위")
+    min_p = cfg["policy"].get("min_buy_prob")
+    if min_p and est_prob < min_p:
+        raise Rejected(f"내 상승 확률 {est_prob:.2f} < {min_p:.2f}: 스스로도 내릴 가능성이 더 높다고 본 종목은 사지 않는다 "
+                       f"(기저율보다 높아도 사는 것만 하는 구조에선 평균적으로 잃는다). 예측으로만 기록하라")
     if not rationale or len(rationale.strip()) < 10:
         raise Rejected("rationale(근거)를 한 줄 이상 적어야 함")
     if bear_case is not None:
