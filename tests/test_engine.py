@@ -53,6 +53,7 @@ class Tmp(unittest.TestCase):
         mock.patch("phil.naver.sector", lambda c: {"code": "278", "name": "반도체와반도체장비"}).start()
         mock.patch.object(config, "SECTORS", self.d / "sectors.json").start()
         mock.patch.object(market, "_REGIME", {"t": 0.0, "value": None}).start()
+        mock.patch.object(policy, "_KMAP", {"t": 0.0, "map": None}).start()
         (self.d / "strategy").mkdir()
         mock.patch("phil.riskbook.STRATEGY", self.d / "strategy").start()
 
@@ -145,11 +146,59 @@ class TestBuy(Tmp):
         self.assertLessEqual(w["cost_krw"], 1_000_000)      # 부정확한 유형은 절반(10%)
         self.assertIn("x0.5", w["size_notes"][0])
 
+    def _bear_up_calls(self, n, good, start=0):
+        """하락장에서 남긴 정산된 '오른다' 예측 n건 (0.7 vs 기저율 0.5). good 이면 4건 중 3건 상승."""
+        for i in range(start, start + n):
+            up = (i % 4 != 0) if good else (i % 4 == 0)
+            config.append_jsonl(forecast.FORECASTS, {"id": f"b{i}", "ts": f"2026-11-{1 + i // 10:02d}T01:{i % 60:02d}:00Z",
+                                                     "code": "005930", "est_prob": 0.7, "base_rate": 0.5, "regime": "하락장",
+                                                     "edge_class": "other", "status": "up" if up else "down"})
+
+    def test_bear_gate_blocks_until_up_calls_proven(self):
+        mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "하락장", "kospi_vs_ma60": -15}).start()
+        with self.assertRaises(ledger.Rejected) as cm:                  # 기록 없음 → 잠김
+            self.buy(est=0.62)
+        self.assertIn("하락장 매수 잠김", str(cm.exception))
+        self.assertTrue(self.buy(est=0.62, edge_class="event")["id"])   # 가격 앵커가 있는 event 는 예외
+        self._bear_up_calls(40, good=False)
+        g = policy.bear_buy_gate()
+        self.assertFalse(g["open"])
+        self.assertGreater(g["brier_delta"], 0)
+        self._bear_up_calls(40, good=True, start=40)                    # 최근 40건이 기저율보다 정확 → 열림
+        g = policy.bear_buy_gate()
+        self.assertTrue(g["open"], g)
+        self.assertEqual(g["n"], 40)
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ("005930", "000660")}
+        with mock.patch("phil.market.universe", lambda refresh=False: uni):
+            self.assertEqual(self.buy(est=0.62, code="000660")["regime"], "하락장")
+        with mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "횡보", "kospi_vs_ma60": 0}):
+            self.assertTrue(policy.bear_buy_gate()["open"])             # 게이트는 하락장에서만 매수를 막는다
+
+    def test_regime_backfill_for_old_forecasts(self):
+        falling = bars("2026-01-01", list(range(400, 150, -1)))
+        with mock.patch("phil.naver.daily_bars", lambda c, n=260: falling):
+            self.assertEqual(policy._regime_on("2026-08-01"), "하락장")
+        config.append_jsonl(forecast.FORECASTS, {"id": "old", "ts": "2026-08-01T01:00:00Z", "ref_date": "2026-08-01",
+                                                 "code": "005930", "est_prob": 0.6, "base_rate": 0.5,
+                                                 "edge_class": "other", "status": "down"})
+        self.assertEqual(len(policy.bear_up_rows()), 1)                 # 장세 미기록 예측도 그날 코스피로 분류
+
+    def test_stop_given_as_percent_or_price(self):
+        e = self.buy(est=0.62, edge_class="event", stop_pct=7)
+        self.assertAlmostEqual(e["stop_pct"], 0.07)
+        self.assertTrue(any("비율" in n for n in e["size_notes"]))
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ("005930", "000660")}
+        with mock.patch("phil.market.universe", lambda refresh=False: uni):
+            e = self.buy(est=0.62, edge_class="event", code="000660", stop_pct=93)   # 현재가 100 에 손절가 93
+        self.assertAlmostEqual(e["stop_pct"], 0.07)
+        self.assertEqual(ledger.normalize_stop(0.05), (0.05, None))
+
     def test_exploration_cap_lower_in_bear_market(self):
         codes = ["000660", "035420", "051910", "005380"]
         uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ["005930"] + codes}
         mock.patch("phil.naver.sector", lambda c: {"code": c, "name": c}).start()
         mock.patch("phil.market.regime_now", lambda max_age_sec=1800: {"label": "하락장", "kospi_vs_ma60": -15}).start()
+        self._bear_up_calls(40, good=True)                               # 하락장 게이트가 열린 상태
         with mock.patch("phil.market.universe", lambda refresh=False: uni):
             for c in ["005930", "000660", "035420"]:
                 self.assertTrue(self.buy(est=0.54, code=c)["exploration"])   # 하락장에서도 탐색은 한다

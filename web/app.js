@@ -134,6 +134,10 @@ function renderState(S) {
   if (S.operator?.park_enabled === false) rows.push(stateRow("💤", "대기 자금 꺼짐 — 남는 현금은 그대로 둡니다"));
   else if (g.reason) rows.push(stateRow("💤", `대기 자금 <b>새로 안 넣음</b> — ${esc(g.reason)}${/하락장/.test(g.reason) ? " · 자산의 30% 까지로 줄입니다" : ""}`, "warnrow"));
   else rows.push(stateRow("💤", `대기 자금 투입 가능 — 남는 현금은 한 번에 자산의 25% 씩 코스피200 에 넣습니다${pk.qty ? ` (지금 ${won(pk.value_krw)})` : ""}`));
+  const bgt = S.bear_gate;
+  if (bgt?.enabled && bgt.bear_now) rows.push(bgt.open
+    ? stateRow("🔓", `하락장 매수 <b>열림</b> — ${esc(bgt.why)}. 기준을 넘는 "오른다" 후보는 하루 3건까지 작게 삽니다`, "goodrow")
+    : stateRow("🔒", `하락장 매수 <b>잠김</b> — ${esc(bgt.why)}. 지금은 예측만으로 배우고, 하락장 "오른다" 예측이 기저율보다 정확해지면 자동으로 다시 삽니다`, "warnrow"));
   const fg = S.score?.forecast_gap;
   if (fg?.alert) rows.push(stateRow("🔮", `오늘 장중 사이클 ${fg.full_cycles_today}번에 예측 ${fg.forecasts_today}건 — 목표(사이클당 ${fg.target_per_cycle}건)에 크게 못 미칩니다. 예측이 쌓여야 실력을 잴 수 있습니다`, "warnrow"));
   if (fg?.up_alert) rows.push(stateRow("📈", `오늘 "오른다" 예측 ${fg.up_forecasts_today}건 — 목표(장중 사이클당 ${fg.up_target_per_cycle}건)에 못 미칩니다. 버는 쪽을 배우려면 이 기록이 쌓여야 합니다`, "warnrow"));

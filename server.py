@@ -206,6 +206,7 @@ def state():
         "post_close_time": load_config()["cycle"].get("post_close_time", "16:30"),
         "breakdown": cached("breakdown", 30, score.breakdown),
         "park_gate": dict(park.GATE),
+        "bear_gate": cached("bear_gate", 60, policy.bear_buy_gate),
         "risk": cached("risk", 60, lambda: __import__("phil.riskbook", fromlist=["summary"]).summary()),
         "tuning_brief": cached("tuning_brief", 60, _tuning_brief),
     }

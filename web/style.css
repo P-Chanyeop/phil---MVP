@@ -98,7 +98,7 @@ p.ph-s{margin:0 0 10px}
 .state-row{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.5;padding:9px 0;border-bottom:1px solid var(--line)}
 .state-row:last-child{border-bottom:0}
 .state-row .si{flex:0 0 18px;text-align:center}
-.state-row.warnrow{color:var(--warn)}.state-row.badrow{color:var(--bad)}
+.state-row.warnrow{color:var(--warn)}.state-row.badrow{color:var(--bad)}.state-row.goodrow{color:var(--phil)}
 .state-row.warnrow b,.state-row.badrow b{color:inherit}
 .nowdoing{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--phil-soft);color:var(--phil);font-weight:600;font-size:13px}
 .pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--phil);animation:pulse 1.2s infinite}

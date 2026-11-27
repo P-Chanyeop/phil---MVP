@@ -73,6 +73,26 @@ def equity(entries=None, cfg=None, prices=None):
     return total
 
 
+def _gate_brief():
+    try:
+        g = policy.bear_buy_gate()
+        return {k: g.get(k) for k in ("open", "bear_now", "why")}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:100]}
+
+
+def normalize_stop(stop, price=None):
+    """손절을 7(%)이나 가격(12900원)으로 넣는 실수를 비율로 바꾼다. 반환 (비율, 설명 또는 None)."""
+    if stop < 1:
+        return stop, None
+    if stop < 50:
+        return round(stop / 100, 4), f"손절 {stop:g} 을 {stop / 100:.0%} 로 해석 (비율로 넣는다: 0.07 = -7%)"
+    if price:
+        pct = round(1 - stop / price, 4)
+        return pct, f"손절 {stop:,.0f}원(가격)을 현재가 {price:,.0f}원 대비 {pct:.1%} 로 해석"
+    return stop, None
+
+
 def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rationale,
         amount_krw=None, cycle_id=None, now=None, bear_case=None):
     """bear_case: 반대 논리. None 이면 검사 안 함 (엔진·테스트용) — 에이전트 경로(tools.py)는 항상 넘긴다."""
@@ -101,8 +121,15 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         raise Rejected("이미 보유 중인 종목")
     if not lim["horizon_days_min"] <= horizon_days <= lim["horizon_days_max"]:
         raise Rejected(f"보유 기간은 {lim['horizon_days_min']}~{lim['horizon_days_max']} 거래일")
+    stop_pct, stop_note = normalize_stop(stop_pct)
+    if stop_pct >= 1:
+        try:
+            stop_pct, stop_note = normalize_stop(stop_pct, naver.quote(code)["price"])
+        except naver.DataError:
+            pass
     if not lim["stop_pct_min"] <= stop_pct <= lim["stop_pct_max"]:
-        raise Rejected(f"손절폭은 {lim['stop_pct_min']:.0%}~{lim['stop_pct_max']:.0%}")
+        raise Rejected(f"손절폭은 {lim['stop_pct_min']:.0%}~{lim['stop_pct_max']:.0%} (비율로: 0.07 = -7%)"
+                       + (f" — {stop_note}" if stop_note else ""))
     if target_pct is not None and target_pct <= 0:
         raise Rejected("목표 수익률은 양수")
     if not 0.0 < est_prob < 1.0:
@@ -123,6 +150,15 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
     why = policy.check_edge_class(edge_class, cfg)
     if why:
         raise Rejected(why)
+    rg_now = market.regime_now()
+    gate_cfg = cfg["policy"].get("bear_buy_gate")
+    if gate_cfg and rg_now and rg_now.get("label") == "하락장" \
+            and edge_class not in gate_cfg.get("exempt_edge_classes", []):
+        gate = policy.bear_buy_gate(cfg)
+        if not gate["open"]:
+            raise Rejected(f"하락장 매수 잠김 — {gate['why']}. 예측으로만 기록하라: 하락장 '오른다' 예측이 "
+                           f"기저율보다 정확해지면 엔진이 자동으로 연다 "
+                           f"({', '.join(gate_cfg.get('exempt_edge_classes', []))} 근거는 예외)")
 
     uni = market.universe()
     if code not in uni:
@@ -145,7 +181,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         today = market.kst_date(iso())
         n_today = sum(1 for x in entries if x.get("exploration") and market.kst_date(x["ts"]) == today)
         cap = exp["max_per_day"]
-        rg = market.regime_now() if exp.get("bear_max_per_day") is not None else None
+        rg = rg_now if exp.get("bear_max_per_day") is not None else None
         if rg and rg.get("label") == "하락장":
             cap = min(cap, exp["bear_max_per_day"])
         if n_today >= cap:
@@ -154,7 +190,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         exploration = True
 
     # 에이전트의 리스크 규칙 (업종 중복·추격 금지·진입 필터) — 엔진이 강제
-    sector, size_notes = None, []
+    sector, size_notes = None, ([stop_note] if stop_note else [])
     if risk_problem:
         size_notes.append(risk_problem)
     try:
@@ -204,6 +240,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
         "edge_class": edge_class, "rationale": rationale.strip(), "exploration": exploration,
         "bear_case": (bear_case or "").strip()[:500] or None,
+        "regime": (rg_now or {}).get("label"),
         "sector": sector, "size_pct": round(pct, 4), "size_notes": size_notes, "stop_pct": round(stop_pct, 4),
         "strategy_rev": strategy_rev(),
         "status": "open", "last_price": price,
@@ -322,6 +359,7 @@ def status(refresh_prices=True):
     return {
         "cash_krw": cash(entries, cfg),
         "park": park.summary(),
+        "bear_buy_gate": _gate_brief(),
         "buying_power_krw": buying_power(entries, cfg),
         "equity_krw": equity(entries, cfg, prices),
         "bankroll_start_krw": cfg["sim_bankroll_krw"],

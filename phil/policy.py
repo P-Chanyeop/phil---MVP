@@ -158,6 +158,73 @@ def size_factor(edge_class, cfg=None):
     return None, 1.0, f"'{edge_class}' 의 '오른다' 예측이 기저율보다 정확 (Δ {s['brier_delta']:+.4f}, {n}건) → 원래 크기"
 
 
+_KMAP = {"t": 0.0, "map": None}
+
+
+def _regime_on(date):
+    """그날 장세 라벨 (코스피 vs 60일선, research.regime 과 같은 기준). 장세를 기록하기 전의 옛 예측용.
+    코스피 일봉은 30분 캐시. 조회 실패면 None (그 기록은 하락장 성적에서 빠진다)."""
+    import time
+    if _KMAP["map"] is None or time.time() - _KMAP["t"] > 1800:
+        try:
+            from . import naver, research
+            _KMAP.update(t=time.time(), map=research._kospi_map(naver.daily_bars("KOSPI", 260)))
+        except Exception:  # noqa: BLE001
+            return None
+    m = _KMAP["map"] or {}
+    days = [d for d in m if d <= date]
+    if not days:
+        return None
+    vs60 = m[max(days)][3]
+    return "상승장" if vs60 > 2 else "하락장" if vs60 < -2 else "횡보"
+
+
+def bear_up_rows():
+    """하락장에서 남긴 '오른다' 예측(내 확률 > 기저율) 중 정산된 것, 오래된 순. 예측 + 만기 지난 매매."""
+    from .market import kst_date
+
+    def rg_of(x, date):
+        date = date or (kst_date(x["ts"]) if x.get("ts") else None)
+        return x.get("regime") or (_regime_on(date) if date else None)
+
+    out = []
+    for r in load_jsonl(FORECASTS):
+        if r["status"] in ("up", "down") and r["est_prob"] > r["base_rate"] and rg_of(r, r.get("ref_date")) == "하락장":
+            out.append((r.get("ts") or "", (r["est_prob"], r["base_rate"], r["status"] == "up", r["edge_class"])))
+    for e in load_jsonl(LEDGER):
+        if "calib" in e and e["est_prob"] > e["base_rate"] and rg_of(e, None) == "하락장":
+            out.append((e.get("ts") or "", (e["est_prob"], e["base_rate"], e["calib"] == "up", e["edge_class"])))
+    out.sort(key=lambda x: x[0])
+    return [x[1] for x in out]
+
+
+def bear_buy_gate(cfg=None):
+    """하락장 매수 게이트: 하락장에서 남긴 '오른다' 예측의 최근 성적이 기저율보다 정확해야 하락장 매수를 연다.
+    증명되기 전에는 예측으로만 배우고(돈 안 듦), 증명되면 엔진이 자동으로 다시 산다."""
+    cfg = cfg or load_config()
+    g = cfg["policy"].get("bear_buy_gate")
+    if not g:
+        return {"enabled": False, "open": True}
+    from . import market
+    rg = market.regime_now()
+    rows = bear_up_rows()[-g["window"]:]
+    st = brier(rows) or {"n": 0}
+    n = st["n"]
+    opened = n >= g["min_n"] and st["brier_delta"] < g.get("max_brier_delta", 0.0)
+    out = {"enabled": True, "open": opened, "bear_now": bool(rg and rg.get("label") == "하락장"),
+           "n": n, "min_n": g["min_n"], "window": g["window"], "exempt": g.get("exempt_edge_classes", [])}
+    if n:
+        out.update(brier_delta=st["brier_delta"],
+                   call_hit=round(sum(1 for r in rows if r[2]) / n, 3),
+                   avg_base_rate=round(sum(r[1] for r in rows) / n, 3))
+    if n < g["min_n"]:
+        out["why"] = f"하락장 '오른다' 예측 정산 {n}건 — {g['min_n']}건이 쌓여야 판단"
+    else:
+        out["why"] = (f"최근 하락장 '오른다' 예측 {n}건: 실제로 오른 비율 {out['call_hit']:.0%} (기저율 평균 {out['avg_base_rate']:.0%}), "
+                      f"기저율 대비 Δ {st['brier_delta']:+.4f} → " + ("기저율보다 정확 — 매수 열림" if opened else "기저율보다 부정확 — 매수 잠김"))
+    return out
+
+
 def summary():
     cfg = load_config()
     lim = cfg["limits"]
@@ -175,11 +242,15 @@ def summary():
             "비용: 매수·매도 수수료 0.015%, 슬리피지 0.05%, 매도 시 증권거래세 0.20%",
             "근거 유형별 정확도 → 매수 크기: 정산 10건 미만 유형은 자산의 5% 까지, 기저율보다 부정확한 유형은 절반",
             "strategy/risk.json 의 max_same_sector·avoid_if_up_today_pct·entry_filters·크기 상한을 엔진이 강제 (더 보수적인 방향만)",
+            (lambda g: f"하락장 매수 게이트: 하락장 '오른다' 예측 최근 {g['window']}건(최소 {g['min_n']}건)이 기저율보다 정확할 때만 하락장 매수 허용 "
+                       f"({', '.join(g.get('exempt_edge_classes', [])) or '예외 없음'} 은 예외)")(cfg['policy']['bear_buy_gate'])
+            if cfg['policy'].get('bear_buy_gate') else "하락장 매수 게이트 없음",
         ],
         "edge_classes": cfg["policy"]["edge_classes"],
         "banned_edge_classes": banned_edge_classes(cfg),
         "calibration_by_edge_class": calibration_by_class(),
         "by_model": by_model(),
+        "bear_buy_gate": bear_buy_gate(cfg),
         "sizing_by_accuracy": {k: size_factor(k, cfg)[2] for k in cfg["policy"]["edge_classes"] if k != "rule"},
         "risk_json": _risk_summary(),
     }

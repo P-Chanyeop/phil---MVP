@@ -47,6 +47,7 @@ def record(code, horizon_days, est_prob, edge_class, note="", cycle_id=None, now
            "ref_date": market.kst_date(iso()), "est_prob": round(est_prob, 4),
            "base_rate": br, "edge_class": edge_class,
            "note": (note or "").strip()[:500], "status": "open",
+           "regime": (market.regime_now() or {}).get("label"),
            "strategy_rev": __import__("phil.ledger", fromlist=["strategy_rev"]).strategy_rev()}
     with ledger_lock():
         if any(r["code"] == code and r["status"] == "open" for r in load_jsonl(FORECASTS)):
