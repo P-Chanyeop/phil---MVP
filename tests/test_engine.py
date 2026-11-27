@@ -1032,6 +1032,13 @@ class TestForecastGap(Tmp):
         self.assertTrue(g["alert"])
         config.append_jsonl(cyc, {"mode": "FULL", "ok": True, "started": "2026-11-11T04:30:00Z", "new_forecasts": 20})
         self.assertFalse(score.forecast_gap(now)["alert"])
+        self.assertTrue(score.forecast_gap(now)["up_alert"])            # "오른다" 예측 0건
+        for i in range(4):
+            config.append_jsonl(forecast.FORECASTS, {"id": f"u{i}", "ts": "2026-11-11T02:00:00Z", "code": "005930",
+                                                     "est_prob": 0.58, "base_rate": 0.5, "edge_class": "other", "status": "open"})
+        g = score.forecast_gap(now)
+        self.assertEqual(g["up_forecasts_today"], 4)
+        self.assertFalse(g["up_alert"])
 
 
 class TestEventDoesNotStarveRegular(Tmp):

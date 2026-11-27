@@ -135,9 +135,15 @@ def forecast_gap(now=None):
     full = [c for c in load_jsonl(CYCLES_LOG) if c.get("mode") == "FULL" and c.get("ok")
             and c.get("started") and market.kst_date(c["started"]) == today]
     n_fc = sum(c.get("new_forecasts") or 0 for c in full)
-    target = load_config()["policy"].get("forecasts_per_full_cycle", 8)
+    pol = load_config()["policy"]
+    target = pol.get("forecasts_per_full_cycle", 8)
+    up_target = pol.get("up_forecasts_per_full_cycle", 2)
+    n_up = sum(1 for r in load_jsonl(FORECASTS)
+               if r.get("ts") and market.kst_date(r["ts"]) == today and r["est_prob"] > r["base_rate"])
     return {"full_cycles_today": len(full), "forecasts_today": n_fc, "target_per_cycle": target,
-            "alert": len(full) >= 2 and n_fc < target * len(full) / 2}
+            "up_forecasts_today": n_up, "up_target_per_cycle": up_target,
+            "alert": len(full) >= 2 and n_fc < target * len(full) / 2,
+            "up_alert": len(full) >= 2 and n_up < up_target * len(full) / 2}
 
 
 def breakdown(prices=None):
