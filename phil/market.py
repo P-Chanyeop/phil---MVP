@@ -71,6 +71,23 @@ def trading_window(now=None):
     return True, "장중"
 
 
+def atr_pct(bars, days=14):
+    """최근 days 거래일 평균 진폭(ATR)을 마지막 종가 대비 비율로. 하루에 보통 이만큼 흔들린다."""
+    if len(bars) < days + 1:
+        return None
+    trs = []
+    for i in range(len(bars) - days, len(bars)):
+        _, _, h, lo, _, _ = bars[i]
+        pc = bars[i - 1][4]
+        if not (h and lo and pc):
+            continue
+        trs.append(max(h - lo, abs(h - pc), abs(lo - pc)))
+    last = bars[-1][4]
+    if not trs or not last:
+        return None
+    return round(sum(trs) / len(trs) / last, 4)
+
+
 def base_rate(bars, horizon):
     """최근 bars 에서 'horizon 거래일 뒤 종가 > 오늘 종가' 였던 비율 (Laplace 보정)."""
     closes = [b[4] for b in bars]

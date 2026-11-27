@@ -159,6 +159,19 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
     except riskbook.Veto as v:
         raise Rejected(str(v)) from None
 
+    # 손절이 평소 하루 흔들림보다 좁으면 잡음에 털린다 → 변동성 기준으로 넓히고, 같은 위험이 되게 크기를 줄인다
+    risk_factor = 1.0
+    st = cfg.get("stops") or {}
+    if st.get("atr_mult"):
+        atr = market.atr_pct(bars, st.get("atr_days", 14))
+        if atr:
+            floor = round(min(st["atr_mult"] * atr, lim["stop_pct_max"]), 4)
+            if stop_pct < floor:
+                risk_factor = stop_pct / floor
+                size_notes.append(f"손절 {stop_pct:.1%} → {floor:.1%} (최근 {st.get('atr_days', 14)}일 하루 평균 진폭 {atr:.1%} 의 "
+                                  f"{st['atr_mult']}배 — 잡음 손절 방지). 같은 위험이 되도록 크기 x{risk_factor:.2f}")
+                stop_pct = floor
+
     eq = equity(entries, cfg)
     pct = exp["position_pct"] if exploration else lim["max_position_pct"]
     if not exploration:   # 근거 유형의 정확도 → 크기 (미검증은 작게, 부정확은 절반)
@@ -168,6 +181,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         pct *= factor
         if note:
             size_notes.append(note)
+    pct *= risk_factor
     max_amt = eq * pct
     amount = min(amount_krw or max_amt, max_amt, buying_power(entries, cfg))
     price = q["price"]
@@ -186,7 +200,7 @@ def buy(code, est_prob, horizon_days, stop_pct, target_pct, edge_class, rational
         "est_prob": round(est_prob, 4), "base_rate": br, "edge": edge,
         "edge_class": edge_class, "rationale": rationale.strip(), "exploration": exploration,
         "bear_case": (bear_case or "").strip()[:500] or None,
-        "sector": sector, "size_pct": round(pct, 4), "size_notes": size_notes,
+        "sector": sector, "size_pct": round(pct, 4), "size_notes": size_notes, "stop_pct": round(stop_pct, 4),
         "strategy_rev": strategy_rev(),
         "status": "open", "last_price": price,
     }

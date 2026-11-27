@@ -298,14 +298,19 @@ async function loadJournal() {
   $("#stratHist").innerHTML = strat.history.map((h) => `<div class="item" data-diff="${esc(h.cycle_id)}"><div class="q">✏️ ${h.paths.map(esc).join(", ")}</div><div class="meta"><span>${ago(h.ts)}</span><span>사이클 ${esc(h.cycle_id)}</span></div></div>`).join("") || `<div class="empty">아직 전략을 고친 적이 없어요.</div>`;
   $("#playbook").textContent = strat.playbook;
   const byCal = sc.calibration_by_edge_class || {}, banned = sc.banned_edge_classes || {};
-  $("#fcSub").textContent = `예측 ${sc.forecasts?.total || 0}건 기록 · 정확도 측정 ${cal.n || 0}건` + (cal.n ? ` · 전체적으로 기저율보다 ${cal.brier_delta < 0 ? "더 정확" : "덜 정확"} (Δ ${cal.brier_delta}, 방향 적중 ${pct(cal.hit_rate)})` : "") + ". 기저율보다 못한 근거 유형은 엔진이 매수를 막아요.";
+  const cd = sc.calibration_by_direction || {}, up = cd.up_calls || {}, dn = cd.down_calls || {};
+  $("#fcSub").innerHTML = `예측 ${sc.forecasts?.total || 0}건 기록 · 정확도 측정 ${cal.n || 0}건` + (cal.n ? ` · 전체적으로 기저율보다 ${cal.brier_delta < 0 ? "더 정확" : "덜 정확"} (Δ ${cal.brier_delta})` : "") + ". 기저율보다 못한 근거 유형은 엔진이 매수를 막습니다." +
+    (up.n || dn.n ? `<br>매수는 "오른다" 예측으로만 하므로 그쪽 정확도가 돈과 직결됩니다: 오른다 ${up.n || 0}건 적중 ${up.n ? pct(up.call_hit) : "—"}, 내린다 ${dn.n || 0}건 적중 ${dn.n ? pct(dn.call_hit) : "—"}.` : "");
   const keys = [...new Set([...Object.keys(byCal), ...Object.keys(banned)])].sort((a, b) => (byCal[b]?.n || 0) - (byCal[a]?.n || 0));
   const bm = sc.by_model || {};
+  const dirOne = (label, d) => d && d.n ? `${label} ${d.n}건 · 적중 <span class="${d.call_hit >= 0.5 ? "up" : "down"}">${pct(d.call_hit)}</span> · ${d.brier_delta < 0 ? "기저율보다 정확" : "기저율보다 부정확"}` : `${label} 0건`;
+  const dirLine = (dd) => dd ? `<div class="meta"><span>${dirOne("오른다고 본 예측", dd.up_calls)}</span></div><div class="meta"><span>${dirOne("내린다고 본 예측", dd.down_calls)}</span></div>` : "";
   $("#modelTable").innerHTML = Object.entries(bm).map(([m, v]) => {
     const f = v.forecast || {}, t = v.trades || {};
     const verdict = f.n ? (f.brier_delta < 0 ? `<span class="up">기저율보다 정확</span>` : `<span class="down">기저율보다 부정확</span>`) : `<span class="sub">아직 결과 나온 예측 없음 (예측 기간 1~5일 뒤 정산)</span>`;
     return `<div class="item"><div class="q">${esc(m)} <span class="sub">${v.since ? new Date(v.since).toLocaleDateString("ko-KR") + "부터" : ""}</span></div>
       <div class="meta"><span>예측 정산 ${f.n || 0}건${v.forecasts_open ? ` · 결과 대기 ${v.forecasts_open}건` : ""} · ${verdict}${f.n ? ` (Δ ${f.brier_delta > 0 ? "+" : ""}${f.brier_delta.toFixed(4)}, 적중 ${pct(f.hit_rate)})` : ""}</span></div>
+      ${dirLine(v.directions)}
       <div class="meta"><span>매매 청산 ${t.n}건${v.trades_open ? ` · 보유 중 ${v.trades_open}건` : ""}${t.n ? ` · 승 ${t.wins} · <span class="${ud(t.pnl_krw)}">${won(t.pnl_krw, 1)}</span> · 평균 ${sp(t.avg_ret_pct)}` : ""}</span></div></div>`;
   }).join("") || `<div class="empty">아직 기록이 없습니다.</div>`;
   $("#catTable").innerHTML = keys.map((k) => { const c = byCal[k], b = banned[k];

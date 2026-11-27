@@ -157,6 +157,20 @@ class TestBuy(Tmp):
                 self.buy(est=0.54, code="051910")
             self.assertIn("하락장", str(cm.exception))
 
+    def test_atr_widens_tight_stop_and_shrinks_size(self):
+        self._settled_forecasts("earnings", 12, good=True)              # 원래 크기(20%)가 나오는 유형
+        calm = self.buy(est=0.62)
+        self.assertAlmostEqual(calm["stop_pct"], 0.04)                  # 하루 진폭 ~1% 종목은 그대로
+        wild = bars("2026-01-01", [100] * 200, ohlc=[(100, 104, 96)] * 200)   # 하루 진폭 8%
+        uni = {c: {"name": c, "market": "KOSPI", "price": 100} for c in ("005930", "000660")}
+        with mock.patch("phil.naver.daily_bars", lambda c, n=260: wild), \
+                mock.patch("phil.market.universe", lambda refresh=False: uni):
+            e = self.buy(est=0.62, code="000660")
+        self.assertAlmostEqual(e["stop_pct"], 0.10)                     # 1.5 x 8% = 12% → 상한 10%
+        self.assertAlmostEqual(e["stop_price"], 90.0, delta=0.5)
+        self.assertAlmostEqual(e["size_pct"], calm["size_pct"] * 0.4, places=3)   # 위험 같게: 4%/10%
+        self.assertTrue(any("잡음 손절" in n for n in e["size_notes"]))
+
     def test_bear_case_required_on_agent_path(self):
         with self.assertRaises(ledger.Rejected) as cm:
             self.buy(bear_case="짧음")
@@ -1028,4 +1042,17 @@ class TestEventDoesNotStarveRegular(Tmp):
                 mock.patch("phil.cycle.time.time", lambda: t0):
             loop._regular()
         self.assertEqual(loop.next_run, t0 + 10 * 60)                  # 못 돌았으면 10분 뒤 재시도
+
+
+class TestDirectionSplit(Tmp):
+    def test_up_and_down_calls_scored_separately(self):
+        from phil import policy
+        rows = ([(0.6, 0.5, False, "x")] * 3 + [(0.6, 0.5, True, "x")]        # 오른다 4건 중 1건 적중
+                + [(0.4, 0.5, False, "x")] * 6 + [(0.4, 0.5, True, "x")] * 2)  # 내린다 8건 중 6건 적중
+        d = policy.by_direction(rows)
+        self.assertEqual((d["up_calls"]["n"], d["up_calls"]["call_hit"]), (4, 0.25))
+        self.assertEqual((d["down_calls"]["n"], d["down_calls"]["call_hit"]), (8, 0.75))
+        self.assertGreater(d["up_calls"]["brier_delta"], 0)                     # 오른다 쪽은 기저율보다 못함
+        self.assertLess(d["down_calls"]["brier_delta"], 0)
+        self.assertEqual(policy.by_direction([])["up_calls"], {"n": 0})
 

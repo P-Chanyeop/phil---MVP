@@ -31,6 +31,26 @@ def brier(rows):
             "hit_rate": round(sum(1 for p, _, y, _ in rows if (p > 0.5) == y) / n, 3)}
 
 
+def by_direction(rows):
+    """방향별 정확도: '오른다'(내 확률 > 기저율) 예측과 '내린다'(내 확률 < 기저율) 예측을 따로.
+    매수는 '오른다' 예측으로만 하므로, 돈과 직결되는 건 up_calls 쪽이다.
+    call_hit: 오른다고 본 것이 실제로 올랐거나, 내린다고 본 것이 실제로 내린 비율."""
+    out = {}
+    for name, pick, want in (("up_calls", lambda p, b: p > b, True), ("down_calls", lambda p, b: p < b, False)):
+        sub = [r for r in rows if pick(r[0], r[1])]
+        st = brier(sub)
+        if st:
+            st["call_hit"] = round(sum(1 for r in sub if r[2] == want) / len(sub), 3)
+            st["actual_up_rate"] = round(sum(1 for r in sub if r[2]) / len(sub), 3)
+            st["avg_base_rate"] = round(sum(r[1] for r in sub) / len(sub), 3)
+        out[name] = st or {"n": 0}
+    return out
+
+
+def calibration_by_direction():
+    return by_direction(_rows())
+
+
 def calibration_by_class():
     g = defaultdict(list)
     for r in _rows():
@@ -80,6 +100,7 @@ def by_model():
     for m in sorted(set(fc) | set(tr) | set(first), key=lambda k: first.get(k, "")):
         rows = tr.get(m, [])
         out[m] = {"since": first.get(m), "forecast": brier(fc.get(m, [])) or {"n": 0},
+                  "directions": by_direction(fc.get(m, [])),
                   "forecasts_open": fc_open.get(m, 0), "trades_open": tr_open.get(m, 0),
                   "trades": {"n": len(rows), "wins": sum(1 for e in rows if e["pnl_krw"] > 0),
                              "pnl_krw": sum(e["pnl_krw"] for e in rows),

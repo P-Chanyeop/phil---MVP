@@ -70,6 +70,7 @@ def report(kospi_now=None):
         "by_edge_class": {k: _trade_stats(v) for k, v in sorted(by_class.items())},
         "calibration": policy.calibration_overall(),
         "calibration_by_edge_class": policy.calibration_by_class(),
+        "calibration_by_direction": policy.calibration_by_direction(),
         "by_model": policy.by_model(),
         "days": day_results(),
         "buy_gap": buy_gap(),
